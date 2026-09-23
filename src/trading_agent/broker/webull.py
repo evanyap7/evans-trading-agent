@@ -96,14 +96,33 @@ class WebullBroker:
                 client.add_endpoint(region, hosts[kind], api_type)
         self._trade = TradeClient(client)
         self._data = DataClient(client)
+        self._cached_account: AccountState | None = None
+        self._cached_account_time: float = 0.0
+
+    def _call_with_retry(self, fn, max_retries: int = 2, delay: float = 2.0):
+        import time
+        for attempt in range(max_retries + 1):
+            try:
+                return fn()
+            except Exception as e:
+                err_str = str(e)
+                if ("TOO_MANY_REQUESTS" in err_str or "429" in err_str) and attempt < max_retries:
+                    time.sleep(delay * (attempt + 1))
+                    continue
+                raise
 
     # -- account --------------------------------------------------------------------
 
     def list_accounts(self) -> list[dict]:
-        return _unwrap_list(_json(self._trade.account_v2.get_account_list()), "data", "accounts")
+        return _unwrap_list(_json(self._call_with_retry(lambda: self._trade.account_v2.get_account_list())), "data", "accounts")
 
-    def get_account(self) -> AccountState:
-        bal = _json(self._trade.account_v2.get_account_balance(self.account_id))
+    def get_account(self, force: bool = False, ttl_seconds: float = 10.0) -> AccountState:
+        import time
+        now = time.time()
+        if not force and self._cached_account and (now - self._cached_account_time) < ttl_seconds:
+            return self._cached_account
+
+        bal = _json(self._call_with_retry(lambda: self._trade.account_v2.get_account_balance(self.account_id)))
         positions = self._positions()
         usd = next((a for a in bal.get("account_currency_assets", []) if a.get("currency") == "USD"), None)
         if bal.get("total_asset_currency") == "USD":
@@ -117,11 +136,14 @@ class WebullBroker:
         else:
             raise BrokerError("balance response has no USD figures; run `trading-agent probe` and check mapping")
         buying_power = _f((usd or {}).get("buying_power"), cash)
-        return AccountState(account_id=self.account_id, equity=equity, cash=cash, buying_power=buying_power,
+        acct = AccountState(account_id=self.account_id, equity=equity, cash=cash, buying_power=buying_power,
                             positions=positions, open_orders=self._open_orders(), as_of=utcnow())
+        self._cached_account = acct
+        self._cached_account_time = time.time()
+        return acct
 
     def _positions(self) -> list[Position]:
-        rows = _unwrap_list(_json(self._trade.account_v2.get_account_position(self.account_id)), "data", "holdings")
+        rows = _unwrap_list(_json(self._call_with_retry(lambda: self._trade.account_v2.get_account_position(self.account_id))), "data", "holdings")
         out = []
         for r in rows:
             qty = _f(r.get("quantity"))
@@ -131,7 +153,7 @@ class WebullBroker:
         return out
 
     def _open_orders(self) -> list[BrokerOrder]:
-        data = _json(self._trade.order_v3.get_order_open(account_id=self.account_id))
+        data = _json(self._call_with_retry(lambda: self._trade.order_v3.get_order_open(account_id=self.account_id)))
         return [self._to_order(o) for o in self._flatten_orders(_unwrap_list(data, "data", "orders"))]
 
     # -- market data ----------------------------------------------------------------
