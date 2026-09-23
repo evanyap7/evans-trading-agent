@@ -90,7 +90,7 @@ class ScreeningResult(Strict):
 class ClaudeResearchAgent:
     name = "llm"
 
-    def __init__(self, model: str = "claude-3-7-sonnet-latest", effort: str = "high"):
+    def __init__(self, model: str = "claude-opus-5-5", effort: str = "high"):
         import anthropic
 
         self.model = model
@@ -105,7 +105,12 @@ class ClaudeResearchAgent:
             "messages": [{"role": "user", "content": render_context(ctx)}],
             "output_format": AgentOutput,
         }
-        if "3-7" in self.model:
+        if "opus" in self.model.lower() or "5" in self.model:
+            kwargs["thinking"] = {"type": "adaptive"}
+            kwargs["output_config"] = {"effort": self.effort}
+            kwargs["betas"] = ["server-side-fallback-2026-07-01"]
+            kwargs["fallbacks"] = "default"
+        elif "3-7" in self.model:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": 2048}
 
         response = self.client.beta.messages.parse(**kwargs)
@@ -116,16 +121,16 @@ class ClaudeResearchAgent:
 
 class TieredResearchAgent:
     """Cost-efficient 2-tier intelligence:
-    - Tier 1 (Fast Screener, e.g. Claude 3.5 Haiku): Filters 20-50 tickers down to the top 2-5 setups.
-    - Tier 2 (Deep Strategist, e.g. Claude 3.7 Sonnet): Formulates precise entry, stop loss, and theses.
+    - Tier 1 (Fast Screener, Claude Haiku 4.5): Filters 20-50 tickers down to top 2-5 setups.
+    - Tier 2 (Deep Strategist, Claude Opus 5.5): Formulates precise entry, stop loss, and theses.
     """
 
     name = "tiered-llm"
 
     def __init__(
         self,
-        model_reasoning: str = "claude-3-7-sonnet-latest",
-        model_fast: str = "claude-3-5-haiku-latest",
+        model_reasoning: str = "claude-opus-5-5",
+        model_fast: str = "claude-haiku-4-5",
     ):
         import anthropic
 
