@@ -66,6 +66,11 @@ def _run_cycle(args) -> None:
         reports = [orch.morning_briefing()]
     elif args.cmd == "tick":
         reports = orch.tick()
+    elif args.cmd == "trade-now":
+        reports = [orch.research()]
+        if orch.ledger.pending():
+            reports.append(orch.execute())
+        reports.append(orch.monitor())
     else:
         reports = [getattr(orch, args.cmd)()]
     for rep in reports:
@@ -101,7 +106,7 @@ def _build(args) -> Orchestrator:
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="trading-agent")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("research", "execute", "monitor", "tick", "morning-report"):
+    for name in ("research", "execute", "monitor", "tick", "morning-report", "trade-now"):
         c = sub.add_parser(name)
         c.add_argument("--broker", choices=["webull", "sim"], default="webull")
         c.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
@@ -122,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
         b = WebullBroker(settings.webull_account_id, settings.webull_region, settings.webull_environment)
         out = b.list_accounts() if args.cmd == "accounts" else b.probe(args.symbol)
         print(json.dumps(out, indent=2, default=str))
-    elif args.cmd in ("research", "execute", "monitor", "tick", "morning-report"):
+    elif args.cmd in ("research", "execute", "monitor", "tick", "morning-report", "trade-now"):
         socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
         with _single_instance(settings.state_dir / "sim" if args.broker == "sim" else settings.state_dir):
             _run_cycle(args)

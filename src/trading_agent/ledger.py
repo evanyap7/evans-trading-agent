@@ -170,7 +170,7 @@ class Ledger:
         )
 
     def evidence_ids(self, cycle_id: str) -> dict[str, str | None]:
-        rows = self.db.execute("SELECT evidence_id, symbol FROM evidence WHERE cycle_id=?", (cycle_id,))
+        rows = self.db.execute("SELECT evidence_id, symbol FROM evidence")
         return {r["evidence_id"]: r["symbol"] for r in rows}
 
     # -- pending entries (research -> execution handoff: OPEN and CLOSE requests) --------------------------

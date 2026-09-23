@@ -193,9 +193,9 @@ class Orchestrator:
         rep.add(f"agent: {len(output.proposals)} proposals, {len(output.exits)} exits"
                 + (f" (no trade: {output.no_trade_reason})" if not output.proposals else ""))
 
-        cycle_ev = self.ledger.evidence_ids(cycle_id)
-        for trade in output.proposals:
-            self._consider_entry(trade, cycle_id, cycle_ev, features, quotes, account, reconciled, rep)
+        cycle_ev = {e.evidence_id: e.symbol for e in evidence}
+        cycle_ev.update(self.ledger.evidence_ids(cycle_id))
+        freed_cash = 0.0
         for ex in output.exits:
             held = account.position(ex.symbol)
             # Every id must exist, and at least one must be our own price/position data for this symbol:
@@ -211,8 +211,15 @@ class Orchestrator:
                 self.ledger.add_pending_action(f"close:{did}:{cycle_id[:8]}", cycle_id,
                                                ex.model_dump_json())
                 rep.add(f"exit queued for {ex.symbol}: {ex.reason[:80]}")
+                q = quotes.get(ex.symbol)
+                px = self._exit_price(q) or (held.last_price if held.last_price > 0 else held.avg_cost)
+                freed_cash += held.quantity * px
             else:
                 rep.add(f"exit for {ex.symbol} ignored (held={bool(held)}, grounded={grounded})")
+
+        entry_account = account.model_copy(update={"cash": account.cash + freed_cash}) if freed_cash > 0 else account
+        for trade in output.proposals:
+            self._consider_entry(trade, cycle_id, cycle_ev, features, quotes, entry_account, reconciled, rep)
         try:
             from .alerts import alert_research_summary
             alert_research_summary(to_trading_date(self.now()).isoformat(), len(output.proposals), len(evidence), rep.notes)
@@ -277,10 +284,19 @@ class Orchestrator:
         self._refresh_earnings(symbols, rep)
         today = to_trading_date(now)
 
-        for row in pending:
-            if row["decision_id"].startswith("close:"):
-                self._execute_close(row, account, quotes, today, rep)
-                continue
+        closes = [r for r in pending if r["decision_id"].startswith("close:")]
+        entries = [r for r in pending if not r["decision_id"].startswith("close:")]
+
+        for row in closes:
+            self._execute_close(row, account, quotes, today, rep)
+
+        if closes:
+            import time
+            time.sleep(2)
+            account = self._account()
+            reconciled, issues = self.reconcile(account)
+
+        for row in entries:
             prop = Proposal.model_validate_json(row["proposal"])
             t = prop.trade
             if to_trading_date(prop.created_at) < self._previous_trading_day(today):
@@ -402,7 +418,9 @@ class Orchestrator:
         if not is_trading_day(td):
             return reports
         if is_regular_session(now):
-            if local >= EXECUTE_AFTER and self._claim_cycle("execute", td):
+            if self.ledger.pending():
+                reports.append(self._guarded("execute", self.execute))
+            elif local >= EXECUTE_AFTER and self._claim_cycle("execute", td):
                 reports.append(self._guarded("execute", self.execute))
             reports.append(self._guarded("monitor", self.monitor))
         elif local >= RESEARCH_AFTER and self._claim_cycle("research", td):
