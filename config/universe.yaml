@@ -20,7 +20,14 @@ symbols:
   NVDA:  {type: EQUITY, sector: Technology}
   AMZN:  {type: EQUITY, sector: Consumer Discretionary}
   GOOGL: {type: EQUITY, sector: Communication Services}
+  GOOG:  {type: EQUITY, sector: Communication Services}
+  NFLX:  {type: EQUITY, sector: Communication Services}
   META:  {type: EQUITY, sector: Communication Services}
+  TSLA:  {type: EQUITY, sector: Consumer Discretionary}
+  AMD:   {type: EQUITY, sector: Technology}
+  PLTR:  {type: EQUITY, sector: Technology}
+  SMCI:  {type: EQUITY, sector: Technology}
+  AEMD:  {type: EQUITY, sector: Health Care}
   JPM:   {type: EQUITY, sector: Financials}
   XOM:   {type: EQUITY, sector: Energy}
 

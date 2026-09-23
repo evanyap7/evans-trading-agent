@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from trading_agent.alerts import (
@@ -75,3 +76,33 @@ def test_alert_helpers(mock_send):
     mock_send.reset_mock()
     alert_killswitch("", engaged=False)
     assert "Kill Switch Released" in mock_send.call_args[0][0]
+
+
+def test_daily_morning_briefing():
+    from trading_agent.alerts import build_daily_briefing_text, send_daily_morning_briefing
+    from trading_agent.schemas import AccountState, Position
+
+    acct = AccountState(
+        account_id="12345",
+        equity=956.11,
+        cash=0.26,
+        buying_power=0.26,
+        positions=[
+            Position(symbol="GOOG", quantity=1.0, avg_cost=150.0, last_price=170.0),
+            Position(symbol="NFLX", quantity=2.0, avg_cost=60.0, last_price=72.44),
+        ],
+        open_orders=[],
+        as_of=datetime.now(),
+    )
+    text = build_daily_briefing_text(acct, date_str="23 Sep 2026")
+    assert "Morning Briefing" in text
+    assert "$956.11" in text
+    assert "GOOG" in text
+    assert "NFLX" in text
+    assert "Senior Trade Analyst" in text
+
+    with patch("trading_agent.alerts.send_telegram", return_value=True) as mock_tg:
+        ok = send_daily_morning_briefing(acct, date_str="23 Sep 2026")
+        assert ok is True
+        assert mock_tg.called
+

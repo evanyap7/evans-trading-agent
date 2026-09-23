@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable
 
 from .agents import AgentContext, ResearchAgent
@@ -126,7 +126,8 @@ class Orchestrator:
         for i in issues:
             rep.add(f"reconcile: {i}")
 
-        symbols = sorted(self.universe.symbols)
+        held_equity_syms = {p.symbol for p in account.positions if p.symbol.isalpha() and len(p.symbol) <= 5}
+        symbols = sorted(set(self.universe.symbols) | held_equity_syms)
         bars = self.broker.get_daily_bars(symbols, BAR_HISTORY)
         quotes = self.broker.get_quotes(symbols)
         evidence, features = build_evidence(bars, quotes, self.universe.regime_benchmark)
@@ -179,12 +180,13 @@ class Orchestrator:
         for ex in output.exits:
             held = account.position(ex.symbol)
             grounded = all(e in cycle_ev for e in ex.evidence_ids)
-            if held and grounded and ex.symbol in trades:
-                did = trades[ex.symbol]["decision_id"]
+            if held and grounded:
+                did = trades[ex.symbol]["decision_id"] if ex.symbol in trades else f"portfolio_{ex.symbol}"
                 self.ledger.add_pending_action(f"close:{did}:{cycle_id[:8]}", cycle_id,
                                                ex.model_dump_json())
+                rep.add(f"exit queued for {ex.symbol}: {ex.reason[:80]}")
             else:
-                rep.add(f"exit for {ex.symbol} ignored (held={bool(held)}, grounded={grounded}, system trade={ex.symbol in trades})")
+                rep.add(f"exit for {ex.symbol} ignored (held={bool(held)}, grounded={grounded})")
         try:
             from .alerts import alert_research_summary
             alert_research_summary(to_trading_date(self.now()).isoformat(), len(output.proposals), len(evidence), rep.notes)
@@ -307,20 +309,25 @@ class Orchestrator:
         return prev
 
     def _execute_close(self, row, account: AccountState, quotes: dict, today: date, rep: CycleReport) -> None:
-        did = row["decision_id"].split(":")[1]
+        parts = row["decision_id"].split(":")
+        did = parts[1]
         trade = next((t for t in self.ledger.open_trades() if t["decision_id"] == did), None)
-        q = quotes.get(trade["symbol"]) if trade else None
-        if trade is None or q is None:
+        symbol = trade["symbol"] if trade else self._pending_symbol(row)
+        q = quotes.get(symbol)
+        if q is None:
             self.ledger.set_pending_status(row["decision_id"], "DROPPED")
             return
-        held = account.position(trade["symbol"])
-        qty = int(min(trade["quantity"], held.quantity if held else 0))
+        held = account.position(symbol)
+        if held is None or held.quantity <= 0:
+            self.ledger.set_pending_status(row["decision_id"], "DROPPED")
+            return
+        qty = int(min(trade["quantity"] if trade else held.quantity, held.quantity))
         if qty > 0:
-            state = self.exec.exit_trade(did, trade["symbol"], qty, q.bid, "agent_thesis_exit", today)
-            rep.add(f"{trade['symbol']}: agent exit SELL {qty} -> {state.value}")
+            state = self.exec.exit_trade(did, symbol, qty, q.bid, "agent_thesis_exit", today)
+            rep.add(f"{symbol}: agent exit SELL {qty} -> {state.value}")
             try:
                 from .alerts import alert_trade_exited
-                alert_trade_exited(trade["symbol"], qty, q.bid, "agent_thesis_exit")
+                alert_trade_exited(symbol, qty, q.bid, "agent_thesis_exit")
             except Exception:
                 pass
         self.ledger.set_pending_status(row["decision_id"], "SUBMITTED")
@@ -333,12 +340,29 @@ class Orchestrator:
 
     # -- scheduler entry point ------------------------------------------------------------
 
+    def morning_briefing(self) -> CycleReport:
+        rep = CycleReport("morning_briefing")
+        account = self._account()
+        try:
+            from .alerts import send_daily_morning_briefing
+            ok = send_daily_morning_briefing(account, self.ledger)
+            rep.add(f"morning briefing dispatched: {ok}")
+        except Exception as e:
+            rep.add(f"morning briefing error: {e}")
+        return rep
+
     def tick(self) -> list[CycleReport]:
         """Call every few minutes. Decides by US/Eastern time what is due, so DST needs no crontab edits."""
         now = self.now()
         td = to_trading_date(now)
         local = now.astimezone(ET).time()
         reports: list[CycleReport] = []
+
+        # 9:00 AM Singapore Time briefing check (SGT is UTC+8)
+        sgt_now = now.astimezone(timezone(timedelta(hours=8)))
+        if sgt_now.hour == 9 and self._claim_cycle("morning_briefing", sgt_now.date()):
+            reports.append(self.morning_briefing())
+
         if not is_trading_day(td):
             return reports
         if is_regular_session(now):

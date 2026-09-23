@@ -66,7 +66,7 @@ def _build(args) -> Orchestrator:
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="trading-agent")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("research", "execute", "monitor", "tick"):
+    for name in ("research", "execute", "monitor", "tick", "morning-report"):
         c = sub.add_parser(name)
         c.add_argument("--broker", choices=["webull", "sim"], default="webull")
         c.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
@@ -87,11 +87,16 @@ def main(argv: list[str] | None = None) -> None:
         b = WebullBroker(settings.webull_account_id, settings.webull_region, settings.webull_environment)
         out = b.list_accounts() if args.cmd == "accounts" else b.probe(args.symbol)
         print(json.dumps(out, indent=2, default=str))
-    elif args.cmd in ("research", "execute", "monitor", "tick"):
+    elif args.cmd in ("research", "execute", "monitor", "tick", "morning-report"):
         orch = _build(args)
         print(f"{orch.now().isoformat(timespec='seconds')} mode={orch.settings.trading_mode.value} "
               f"env={orch.settings.webull_environment} broker={args.broker} agent={orch.agent.name}")
-        reports = orch.tick() if args.cmd == "tick" else [getattr(orch, args.cmd)()]
+        if args.cmd == "morning-report":
+            reports = [orch.morning_briefing()]
+        elif args.cmd == "tick":
+            reports = orch.tick()
+        else:
+            reports = [getattr(orch, args.cmd)()]
         for rep in reports:
             print(f" [{rep.kind}]")
             for n in rep.notes:

@@ -1,5 +1,7 @@
 """End-to-end cycles against the simulated broker."""
 
+from unittest.mock import patch
+
 from conftest import AFTER_CLOSE, IN_SESSION, ScriptedAgent, good_proposal, make_orchestrator, seeded_broker
 from trading_agent.config import TradingMode
 from trading_agent.schemas import AgentOutput, OrderState
@@ -42,8 +44,12 @@ def test_shadow_mode_records_without_sending(tmp_path):
 
 
 def test_prod_blocked_while_live_trading_disabled(tmp_path):
+    from trading_agent.config import load_risk_limits
+
     broker = seeded_broker(IN_SESSION)
-    orch = make_orchestrator(tmp_path, broker, ScriptedAgent(one_idea), AFTER_CLOSE, env="prod")
+    disabled_limits = load_risk_limits()
+    disabled_limits = disabled_limits.model_copy(update={"live_trading": disabled_limits.live_trading.model_copy(update={"enabled": False})})
+    orch = make_orchestrator(tmp_path, broker, ScriptedAgent(one_idea), AFTER_CLOSE, env="prod", limits=disabled_limits)
     rep = orch.research()
     assert any("live_trading_enabled_for_prod" in n for n in rep.notes), rep.notes
     assert broker.place_calls == 0
@@ -128,3 +134,39 @@ def test_tick_runs_each_cycle_once_per_day(tmp_path):
     assert kinds(at(16, 35).tick()) == []
     sat = make_orchestrator(tmp_path, broker, ScriptedAgent(one_idea), datetime(2026, 9, 26, 12, 0, tzinfo=ET))
     assert sat.tick() == []
+
+
+def test_pre_existing_position_exit_for_capital_rotation(tmp_path):
+    from unittest.mock import patch
+    from trading_agent.schemas import ExitProposal, Position
+
+    broker = seeded_broker(IN_SESSION)
+    # Simulate a pre-existing holding in the broker not opened by the ledger
+    broker.positions["GOOG"] = Position(symbol="GOOG", quantity=1.0, avg_cost=150.0, last_price=170.0)
+    broker.set_quote("GOOG", bid=169.90, ask=170.10, last=170.0, fetched_at=IN_SESSION)
+    broker.set_trend_bars("GOOG", start=140, daily_pct=0.05, end=IN_SESSION)
+
+    def exit_goog(ctx):
+        px_id = next(e.evidence_id for e in ctx.evidence if e.kind == "price_features" and e.symbol == "GOOG")
+        return AgentOutput(
+            market_view="rotate into higher momentum",
+            exits=[ExitProposal(symbol="GOOG", reason="Rotate capital into higher velocity breakout", evidence_ids=[px_id])]
+        )
+
+    orch_res = make_orchestrator(tmp_path, broker, ScriptedAgent(exit_goog), AFTER_CLOSE)
+    rep_res = orch_res.research()
+    assert any("exit queued for GOOG" in n for n in rep_res.notes), rep_res.notes
+
+    orch_exec = make_orchestrator(tmp_path, broker, ScriptedAgent(exit_goog), IN_SESSION)
+    rep_exec = orch_exec.execute()
+    assert any("GOOG: agent exit SELL 1" in n for n in rep_exec.notes), rep_exec.notes
+
+
+@patch("trading_agent.alerts.send_telegram", return_value=True)
+def test_morning_briefing_cycle(mock_send, tmp_path):
+    broker = seeded_broker(IN_SESSION)
+    orch = make_orchestrator(tmp_path, broker, ScriptedAgent(one_idea), IN_SESSION)
+    rep = orch.morning_briefing()
+    assert any("morning briefing dispatched: True" in n for n in rep.notes), rep.notes
+    assert mock_send.called
+

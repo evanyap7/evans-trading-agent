@@ -8,14 +8,14 @@
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.trading-agent.tick</string>
-  <key>WorkingDirectory</key><string>/Users/YOU/trading-agent</string>
+  <key>WorkingDirectory</key><string>/Users/evanyap7/trading-agent</string>
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/uv</string><string>run</string><string>trading-agent</string>
     <string>tick</string><string>--agent</string><string>llm</string>
   </array>
   <key>StartInterval</key><integer>300</integer>
-  <key>StandardOutPath</key><string>/Users/YOU/trading-agent/state/tick.log</string>
-  <key>StandardErrorPath</key><string>/Users/YOU/trading-agent/state/tick.err</string>
+  <key>StandardOutPath</key><string>/Users/evanyap7/trading-agent/state/tick.log</string>
+  <key>StandardErrorPath</key><string>/Users/evanyap7/trading-agent/state/tick.err</string>
 </dict>
 </plist>

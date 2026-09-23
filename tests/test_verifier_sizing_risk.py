@@ -96,19 +96,25 @@ def test_risk_approves_clean_order(setup, limits, universe):
 
 @pytest.mark.parametrize("kw,check", [
     ({"kill_switch_engaged": True}, "kill_switch_off"),
-    ({"sends_real_orders_to_prod": True}, "live_trading_enabled_for_prod"),
+    ({"sends_real_orders_to_prod": True, "limits_override": {"live_trading": {"enabled": False}}}, "live_trading_enabled_for_prod"),
     ({"reconciled": False}, "broker_reconciled"),
     ({"decision_already_executed": True}, "not_duplicate_decision"),
-    ({"entries_today": 3}, "new_trades_per_day_ok"),
+    ({"entries_today": 10}, "new_trades_per_day_ok"),
     ({"now": IN_SESSION.replace(hour=18)}, "market_session_open"),
     ({"start_of_day_equity": 1_100_000}, "daily_loss_ok"),
     ({"peak_equity": 1_200_000}, "drawdown_ok"),
     ({"open_risks": [OpenRisk("XLK", 10, 100, 95)]}, "no_existing_exposure_in_symbol"),
-    ({"open_risks": [OpenRisk("AAPL", 2000, 100, None)]}, "portfolio_risk_ok"),
+    ({"open_risks": [OpenRisk("AAPL", 50000, 100, None)]}, "portfolio_risk_ok"),
 ])
 def test_risk_limits_block(setup, limits, universe, kw, check):
-    b, p, s = _sized(setup, limits)
-    d = evaluate(s, "ETF", 10, _ctx(b, **kw), limits, universe, Events())
+    kw_copy = dict(kw)
+    override = kw_copy.pop("limits_override", None)
+    test_limits = limits
+    if override:
+        if "live_trading" in override:
+            test_limits = test_limits.model_copy(update={"live_trading": test_limits.live_trading.model_copy(update=override["live_trading"])})
+    b, p, s = _sized(setup, test_limits)
+    d = evaluate(s, "ETF", 10, _ctx(b, **kw_copy), test_limits, universe, Events())
     assert not d.approved and check in d.failed_checks
 
 
@@ -121,11 +127,13 @@ def test_wide_spread_blocks(setup, limits, universe):
 
 
 def test_stock_without_earnings_date_blocked_and_earnings_in_window_blocked(setup, limits, universe):
-    b, p, s = _sized(setup, limits)
+    # Test strict earnings requirement when enabled
+    strict_limits = limits.model_copy(update={"events": limits.events.model_copy(update={"require_earnings_data_for_stocks": True})})
+    b, p, s = _sized(setup, strict_limits)
     s = s.model_copy(update={"symbol": "AAPL"})
-    no_data = evaluate(s, "EQUITY", 10, _ctx(b), limits, universe, Events())
+    no_data = evaluate(s, "EQUITY", 10, _ctx(b), strict_limits, universe, Events())
     assert "earnings_date_known" in no_data.failed_checks
     soon = Events(earnings={"AAPL": IN_SESSION.date() + timedelta(days=7)})
-    assert "no_earnings_in_holding_window" in evaluate(s, "EQUITY", 10, _ctx(b), limits, universe, soon).failed_checks
+    assert "no_earnings_in_holding_window" in evaluate(s, "EQUITY", 10, _ctx(b), strict_limits, universe, soon).failed_checks
     later = Events(earnings={"AAPL": date(2026, 12, 1)})
-    assert "no_earnings_in_holding_window" not in evaluate(s, "EQUITY", 10, _ctx(b), limits, universe, later).failed_checks
+    assert "no_earnings_in_holding_window" not in evaluate(s, "EQUITY", 10, _ctx(b), strict_limits, universe, later).failed_checks
