@@ -10,6 +10,8 @@
     trading-agent kill --reason "..."      operator stop: block new orders, cancel working entries
     trading-agent unkill
     trading-agent verify-ledger            check the audit hash chain
+    trading-agent backtest --start 2024-01-01 [--end ...] [--agent llm] [--cash 1500]
+                                           replay history through the live pipeline
 
 Add `--broker sim` to any cycle to run against synthetic data with no credentials.
 """
@@ -122,6 +124,19 @@ def main(argv: list[str] | None = None) -> None:
     k.add_argument("--reason", required=True)
     sub.add_parser("unkill")
     sub.add_parser("verify-ledger")
+    bt = sub.add_parser("backtest", help="replay historical daily bars through the live decision pipeline")
+    bt.add_argument("--start", required=True, type=_date, help="first trading day (YYYY-MM-DD)")
+    bt.add_argument("--end", type=_date, default=None, help="last trading day (default: yesterday)")
+    bt.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
+    bt.add_argument("--cash", type=float, default=1500.0, help="starting cash in USD")
+    bt.add_argument("--no-trailing", action="store_true", help="disable the trailing stop (A/B comparison)")
+    bt.add_argument("--no-halt", action="store_true",
+                    help="keep trading after the drawdown kill switch would have tripped (it is still reported)")
+    bt.add_argument("--ignore-earnings", action="store_true",
+                    help="allow stocks with no known earnings date (live blocks them)")
+    bt.add_argument("--max-llm-calls", type=int, default=40,
+                    help="refuse to make more than this many uncached LLM calls (each costs money)")
+    bt.add_argument("--out", type=Path, default=None, help="directory for summary.json, trades.csv, equity.csv")
     args = p.parse_args(argv)
 
     settings = load_settings()
@@ -147,6 +162,57 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(0 if ok else 1)
     elif args.cmd == "status":
         _status(settings)
+    elif args.cmd == "backtest":
+        socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
+        _backtest(args, settings)
+
+
+def _date(s: str):
+    from datetime import date
+
+    return date.fromisoformat(s)
+
+
+def _backtest(args, settings) -> None:
+    from datetime import date, datetime, timedelta
+
+    from .backtest import AgentOutputCache, Backtester, load_bars, load_earnings_history
+
+    limits, universe = load_risk_limits(), load_universe()
+    end = args.end or date.today() - timedelta(days=1)
+    if args.no_trailing:
+        limits = limits.model_copy(update={"execution": limits.execution.model_copy(update={"trailing_stops": False})})
+    if args.ignore_earnings:
+        limits = limits.model_copy(update={"events": limits.events.model_copy(
+            update={"require_earnings_data_for_stocks": False})})
+    cache_dir = settings.state_dir / "backtest_cache"
+    symbols = sorted(universe.symbols)
+    print(f"loading daily bars for {len(symbols)} symbols ...")
+    bars = load_bars(symbols, args.start, end, cache_dir)
+    stocks = [s for s, sec in universe.symbols.items() if sec.type == "EQUITY"]
+    earnings = {} if args.ignore_earnings else load_earnings_history(stocks, cache_dir)
+    if args.agent == "llm":
+        agent = TieredResearchAgent(model_reasoning=settings.llm_model, model_fast=settings.llm_model_fast)
+        print("NOTE: the LLM was trained on text covering these dates, so its results are optimistic (lookahead).")
+    else:
+        agent = BaselineMomentumAgent()
+    cache = (AgentOutputCache(cache_dir / "agent_outputs" / agent.model.replace("/", "_"), args.max_llm_calls)
+             if args.agent == "llm" else None)
+    bt = Backtester(bars=bars, agent=agent, limits=limits, universe=universe, start=args.start, end=end,
+                    starting_cash=args.cash, earnings_history=earnings, halt_on_kill_switch=not args.no_halt,
+                    output_cache=cache)
+    result = bt.run()
+    if not args.ignore_earnings:
+        for s in sorted(x for x in stocks if not earnings.get(x)):
+            result.warnings.append(f"{s}: no earnings history, so never traded (use --ignore-earnings to allow)")
+    missing = sorted(set(symbols) - set(bars))
+    if missing:
+        result.warnings.append(f"no price data for {', '.join(missing)}")
+    result.warnings.append("universe is today's list (survivorship bias); no historical news is replayed")
+    print(result.report())
+    out = args.out or settings.state_dir / "backtests" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    result.write(out)
+    print(f"wrote {out}/summary.json, trades.csv, equity.csv")
 
 
 def _status(settings) -> None:

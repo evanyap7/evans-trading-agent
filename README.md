@@ -77,6 +77,26 @@ The agent dispatches real-time events to your Telegram bot:
 - **Automated Exits & Capital Rotation**: Instant alert when take-profit, stop-loss, or rotation exits execute.
 - **Daily 9:00 AM Morning Briefing**: Complete portfolio snapshot, 24h P&L, open positions with unrealized gains, and analyst stance delivered at 09:00 SGT (`trading-agent morning-report`).
 
+## Backtesting
+
+```bash
+uv run trading-agent backtest --start 2024-01-02                  # baseline, $1,500, live limits
+uv run trading-agent backtest --start 2024-01-02 --no-halt        # keep going after the kill switch trips
+uv run trading-agent backtest --start 2024-01-02 --no-trailing    # A/B the trailing stop
+uv run trading-agent backtest --start 2025-06-02 --agent llm --max-llm-calls 40   # costs money; cached
+```
+
+`backtest.py` replays daily bars through the live agent, verifier, sizing, risk engine and trailing
+stop. Research at each close sees only bars up to that day. Entries fill at the next open as DAY limits.
+Stops, targets and gaps come from the daily range, and when a bar touches both, the stop is assumed first.
+The run prints expectancy in R, win rate, profit factor, drawdown, Sharpe, exit reasons, the most common
+rejection reasons and SPY buy-and-hold, and writes `summary.json`, `trades.csv` and `equity.csv` under
+`state/backtests/`. Bars, earnings dates and LLM outputs are cached in `state/backtest_cache/`.
+
+Results are optimistic in three known ways: the universe is today's list, no historical news is
+replayed, and an LLM has seen these dates in training. Treat the baseline as the honest control and an
+LLM run as an upper bound.
+
 ## Operating
 
 ```bash
