@@ -21,22 +21,25 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Blueprint component | Where |
 |---|---|
 | Structured LLM trade contract (`OPEN` / `CLOSE` / NO_TRADE) | `schemas.py` |
-| LLM agent (structured outputs, reasoning and refusal fallback) | `agents.py` |
+| Tiered LLM Intelligence (Claude Haiku 4.5 screener + Claude Opus 5.5 strategist) | `agents.py` |
+| Real-time multi-source financial news & macro evidence (Bloomberg, WSJ, Economist, Reuters, NYSE) | `news.py` |
+| Telegram personal assistant bot alerts & 9:00 AM daily executive morning briefing | `alerts.py` |
 | Rule-based momentum baseline, the benchmark the LLM has to beat | `agents.py` |
 | Point-in-time price features as citable evidence | `features.py` |
 | Quant verifier: grounding, freshness, price collar, ATR stop, R:R, net edge after costs | `verifier.py` |
 | Position sizing from risk budget and caps (the LLM never picks quantity) | `portfolio.py` |
 | Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |
+| Capital rotation & pre-existing portfolio position exit engine | `orchestrator.py`, `execution.py` |
 | Idempotent execution: deterministic client order IDs, preview check, no blind retries | `execution.py` |
 | Broker-side GTC stop-loss placed after each fill | `execution.py` |
 | Append-only, hash-chained ledger (SQLite) | `ledger.py` |
 | Reconciliation, kill switch (auto + operator), drawdown breaker | `orchestrator.py`, `killswitch.py` |
-| Webull SG adapter (official SDK v3.0.2, UAT + prod) | `broker/webull.py` |
+| Webull SG adapter (official SDK v3.0.2 + resilient yfinance fallback, UAT + prod) | `broker/webull.py` |
 | Simulated broker for tests and offline runs | `broker/simulated.py` |
-| 51 tests covering the blueprint's failure list | `tests/` |
+| 60 unit and integration tests covering the blueprint's failure list | `tests/` |
 
-**Not built yet:** backtester (Phase 3), news/filings/earnings ingestion, Postgres/Timescale,
-dashboard, real-time order-event stream (gRPC; polling is used instead), options (Phase 7;
+**Not built yet:** offline backtester replay engine (Phase 3), Postgres/Timescale database backend,
+web dashboard, real-time WebSocket order-event stream (gRPC/polling used instead), options (Phase 7;
 Webull's own MCP config marks SG as `supports_options=False`).
 
 ## Setup
@@ -45,7 +48,7 @@ Webull's own MCP config marks SG as `supports_options=False`).
 cd ~/trading-agent
 uv sync --extra webull
 cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run --group dev pytest    # 51 passing
+uv run pytest                # 60 passing
 uv run trading-agent research --broker sim   # offline dry run on synthetic data
 ```
 
