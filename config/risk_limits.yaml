@@ -23,7 +23,7 @@ account:
   max_new_trades_per_day: 5
   max_order_value_usd: 1000   # allows buying whole shares of large-cap leaders
   max_adv_participation_pct: 2
-  daily_profit_target_usd: 10.0 # target minimally +$10 USD / day net profit
+  daily_profit_target_usd: 10.0 # reporting benchmark only; it never triggers an exit or reaches the LLM
 
 signal:
   min_confidence: 0.50
@@ -45,6 +45,12 @@ execution:
   min_price_usd: 5            # no new entries below this share price (penny-stock guard)
   min_avg_dollar_volume_usd: 20000000  # 20-day average dollar volume required for new entries
   max_exit_attempts_per_day: 3         # sell retries per trade per day if the broker rejects an exit
+  # Ratcheting stop in multiples of initial risk R (entry - initial stop). Only ever moves up.
+  trailing_stops: true
+  trail_breakeven_r: 1.0      # at +1R the stop moves to entry: a winner can no longer become a loser
+  trail_start_r: 2.0          # from +2R the stop trails the last price...
+  trail_distance_r: 1.5       # ...by 1.5R, so winners run instead of being capped
+  trail_min_step_r: 0.25      # ignore smaller moves (each move replaces the broker-side stop)
 
 events:
   earnings_blackout_days: 2

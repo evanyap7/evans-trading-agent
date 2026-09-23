@@ -21,7 +21,7 @@ from .features import build_evidence
 from .killswitch import KillSwitch
 from .ledger import Ledger
 from .market_calendar import ET, is_regular_session, is_trading_day, to_trading_date
-from .portfolio import size_order
+from .portfolio import size_order, trailed_stop
 from .risk import OpenRisk, RiskContext, evaluate
 from .schemas import AccountState, Evidence, OrderState, Proposal, TradeProposal, utcnow
 from .verifier import verify
@@ -508,8 +508,6 @@ class Orchestrator:
                 rep.add(f"{t['symbol']}: no fresh quote; software exits skipped (broker stop still active)")
                 continue
             qty = int(min(t["quantity"], held.quantity))
-            gain_usd = (q.last - t["entry_price"]) * qty
-            target = getattr(self.limits.account, "daily_profit_target_usd", 10.0)
             reason = None
             if q.last <= t["stop_loss"]:
                 reason = "stop_breached"
@@ -517,8 +515,12 @@ class Orchestrator:
                 reason = "take_profit"
             elif today >= date.fromisoformat(t["time_stop_date"]):
                 reason = "time_stop"
-            elif gain_usd >= target:
-                reason = f"daily_target_hit_+${gain_usd:.2f}"
+            if reason is None:
+                initial = t["initial_stop"] if t["initial_stop"] is not None else t["stop_loss"]
+                new_stop = trailed_stop(t["entry_price"], initial, t["stop_loss"], q.last, self.limits.execution)
+                if new_stop is not None:
+                    outcome = self.exec.raise_protective_stop(t["decision_id"], t["symbol"], qty, new_stop)
+                    rep.add(f"{t['symbol']}: trail stop {t['stop_loss']} -> {new_stop}: {outcome}")
             if reason:
                 state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, ref, reason, today)
                 rep.add(f"{t['symbol']}: {reason} -> SELL {qty} {state.value}")

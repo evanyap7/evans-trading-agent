@@ -55,7 +55,7 @@ class AccountLimits(Frozen):
     max_new_trades_per_day: int = Field(ge=0, le=10)
     max_order_value_usd: float = Field(gt=0)
     max_adv_participation_pct: float = Field(gt=0, le=5)
-    daily_profit_target_usd: float = Field(default=10.0, ge=0)
+    daily_profit_target_usd: float = Field(default=10.0, ge=0)  # reporting only; never drives exits
 
 
 class SignalLimits(Frozen):
@@ -79,6 +79,19 @@ class ExecutionLimits(Frozen):
     min_price_usd: float = Field(default=5.0, ge=0)                  # no new entries in penny stocks
     min_avg_dollar_volume_usd: float = Field(default=20_000_000, ge=0)  # 20-day average, for new entries
     max_exit_attempts_per_day: int = Field(default=3, ge=1, le=10)
+    # Ratcheting stop, in multiples of the trade's initial risk R = entry - initial stop.
+    trailing_stops: bool = True
+    trail_breakeven_r: float = Field(default=1.0, gt=0)   # at +this R, stop moves to entry
+    trail_start_r: float = Field(default=2.0, gt=0)       # from +this R, stop trails price...
+    trail_distance_r: float = Field(default=1.5, gt=0)    # ...by this many R
+    trail_min_step_r: float = Field(default=0.25, gt=0)   # smaller moves are not worth a broker order
+
+    @model_validator(mode="after")
+    def _trail_locks_in_profit(self) -> "ExecutionLimits":
+        # A trail wider than its start point would sit below entry, i.e. a stop that loosens the breakeven.
+        if self.trail_distance_r > self.trail_start_r:
+            raise ValueError("trail_distance_r must not exceed trail_start_r")
+        return self
 
 
 class EventLimits(Frozen):

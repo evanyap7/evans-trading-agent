@@ -102,6 +102,10 @@ the feed. Individual stocks with no date are blocked from new entries. ETFs are 
 - **Positions are not left without a stop.** Each monitor pass re-arms a missing or rejected broker-side
   stop (bounded, and never while an exit sell is working). A rejected exit is retried up to
   `max_exit_attempts_per_day`; after that the stop is left in place.
+- **Winners run; stops only ratchet up.** Exits come from the stop, the take-profit or the time stop. From +1R
+  the stop moves to breakeven, and from +2R it trails 1.5R behind price (`trail_*` in `risk_limits.yaml`).
+  The broker-side stop is replaced only after the old one's cancel is confirmed. `daily_profit_target_usd` is
+  reported but never triggers a sale.
 - **Exits need a real price.** No sell is priced off a zero bid or a quote older than 15 minutes.
 - **Agent exits need our own evidence.** Selling (including manual holdings, when
   `agent_may_close_manual_positions` is on) must cite price/position data, never news alone.

@@ -113,6 +113,12 @@ class Ledger:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(trades)")}
+        if "initial_stop" not in cols:  # trades opened before trailing stops: current stop = initial stop
+            self.db.execute("ALTER TABLE trades ADD COLUMN initial_stop REAL")
 
     # -- append-only event log ------------------------------------------------
 
@@ -242,9 +248,11 @@ class Ledger:
     def open_trade(self, decision_id: str, symbol: str, quantity: float, entry_price: float,
                    stop_loss: float, take_profit: float, time_stop_date: date) -> None:
         self.db.execute(
-            "INSERT OR IGNORE INTO trades VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO trades (decision_id, symbol, quantity, entry_price, stop_loss, take_profit,"
+            " time_stop_date, opened_at, status, closed_at, exit_reason, initial_stop)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (decision_id, symbol, quantity, entry_price, stop_loss, take_profit, time_stop_date.isoformat(),
-             utcnow().isoformat(), "OPEN", None, None),
+             utcnow().isoformat(), "OPEN", None, None, stop_loss),
         )
         self.append("trade_opened", {"symbol": symbol, "quantity": quantity, "entry_price": entry_price,
                                      "stop_loss": stop_loss, "take_profit": take_profit,
@@ -256,6 +264,16 @@ class Ledger:
     def reduce_trade(self, decision_id: str, remaining_quantity: float) -> None:
         self.db.execute("UPDATE trades SET quantity=? WHERE decision_id=?", (remaining_quantity, decision_id))
         self.append("trade_reduced", {"remaining_quantity": remaining_quantity}, decision_id=decision_id)
+
+    def raise_stop(self, decision_id: str, new_stop: float) -> None:
+        """Move a trade's stop up. Never down: a lower value is ignored."""
+        row = self.db.execute("SELECT stop_loss FROM trades WHERE decision_id=?", (decision_id,)).fetchone()
+        if row is None or new_stop <= row["stop_loss"]:
+            return
+        # Pre-migration trades keep their original stop as the risk unit before it is overwritten.
+        self.db.execute("UPDATE trades SET initial_stop=COALESCE(initial_stop, stop_loss), stop_loss=? WHERE decision_id=?",
+                        (new_stop, decision_id))
+        self.append("stop_raised", {"from": row["stop_loss"], "to": new_stop}, decision_id=decision_id)
 
     def close_trade(self, decision_id: str, reason: str) -> None:
         self.db.execute("UPDATE trades SET status='CLOSED', closed_at=?, exit_reason=? WHERE decision_id=?",
