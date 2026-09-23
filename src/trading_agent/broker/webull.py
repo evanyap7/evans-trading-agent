@@ -260,10 +260,16 @@ class WebullBroker:
         """Raw responses for checking field mappings against a real account."""
         from webull.data.common.category import Category
 
+        def _safe(fn):
+            try:
+                return _json(fn())
+            except Exception as e:
+                return {"error": str(e)}
+
         return {
-            "accounts": _json(self._trade.account_v2.get_account_list()),
-            "balance": _json(self._trade.account_v2.get_account_balance(self.account_id)),
-            "positions": _json(self._trade.account_v2.get_account_position(self.account_id)),
-            "open_orders": _json(self._trade.order_v3.get_order_open(account_id=self.account_id)),
-            "snapshot": _json(self._data.market_data.get_snapshot(symbol, Category.US_STOCK.name)),
+            "accounts": _safe(lambda: self._trade.account_v2.get_account_list()),
+            "balance": _safe(lambda: self._trade.account_v2.get_account_balance(self.account_id)),
+            "positions": _safe(lambda: self._trade.account_v2.get_account_position(self.account_id)),
+            "open_orders": _safe(lambda: self._trade.order_v3.get_order_open(account_id=self.account_id)),
+            "snapshot": _safe(lambda: self._data.market_data.get_snapshot(symbol, Category.US_STOCK.name)),
         }
