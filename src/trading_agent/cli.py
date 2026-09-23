@@ -99,8 +99,9 @@ def _build(args) -> Orchestrator:
         else BaselineMomentumAgent()
     )
     ledger = Ledger(settings.state_dir / "ledger.db")
+    continuous = getattr(args, "continuous", None)
     return Orchestrator(settings=settings, limits=limits, universe=universe, events=events, broker=broker,
-                        ledger=ledger, agent=agent)
+                        ledger=ledger, agent=agent, continuous_trading=continuous)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -110,6 +111,9 @@ def main(argv: list[str] | None = None) -> None:
         c = sub.add_parser(name)
         c.add_argument("--broker", choices=["webull", "sim"], default="webull")
         c.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
+        if name == "tick":
+            c.add_argument("--continuous", action="store_true", default=None,
+                           help="Enable continuous 15-minute intraday trading")
     sub.add_parser("accounts")
     pr = sub.add_parser("probe")
     pr.add_argument("--symbol", default="SPY")
@@ -148,7 +152,10 @@ def main(argv: list[str] | None = None) -> None:
 def _status(settings) -> None:
     ks = KillSwitch(settings.state_dir)
     led = Ledger(settings.state_dir / "ledger.db")
-    print(f"mode={settings.trading_mode.value} env={settings.webull_environment}")
+    limits = load_risk_limits()
+    target = getattr(limits.account, "daily_profit_target_usd", 10.0)
+    print(f"mode={settings.trading_mode.value} env={settings.webull_environment} continuous={settings.continuous_trading}")
+    print(f"daily profit target: +${target:.2f} USD")
     print(f"kill switch: {'ENGAGED - ' + ks.reason() if ks.engaged() else 'off'}")
     print("open trades:")
     for t in led.open_trades():

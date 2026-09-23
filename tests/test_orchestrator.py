@@ -185,3 +185,33 @@ def test_morning_briefing_cycle(mock_send, tmp_path):
     assert any("morning briefing dispatched: True" in n for n in rep.notes), rep.notes
     assert mock_send.called
 
+
+def test_daily_profit_target_exit(tmp_path):
+    broker, orch, rep = _run_research_then_execute(tmp_path)
+    trades = orch.ledger.open_trades()
+    assert len(trades) == 1
+    t = trades[0]
+
+    # Quote moves up by $1.25 on 9 shares = $11.25 gain (>= $10 target), while staying below take_profit (~$2.00 away)
+    entry = t["entry_price"]
+    broker.set_quote(t["symbol"], bid=entry + 1.25, ask=entry + 1.27, last=entry + 1.25, fetched_at=IN_SESSION)
+
+    rep = orch.monitor()
+    assert any("daily_target_hit" in n for n in rep.notes), rep.notes
+    assert t["symbol"] not in broker.positions
+    assert orch.ledger.open_trades() == []
+
+
+def test_continuous_intraday_trading_tick(tmp_path):
+    from datetime import datetime
+    from trading_agent.market_calendar import ET
+
+    broker = seeded_broker(IN_SESSION)
+    kinds = lambda reps: [r.kind for r in reps]  # noqa: E731
+    at = lambda h, m: make_orchestrator(tmp_path, broker, ScriptedAgent(one_idea),
+                                        datetime(2026, 9, 22, h, m, tzinfo=ET), continuous_trading=True)
+    reps = at(9, 50).tick()
+    # Continuous trading active: runs execute, research (intraday slot), execute (pending entries), monitor
+    assert "research" in kinds(reps)
+    assert "monitor" in kinds(reps)
+

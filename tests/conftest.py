@@ -78,8 +78,8 @@ def good_proposal(ctx: AgentContext, symbol: str = "XLK", **overrides) -> TradeP
     return TradeProposal(**data)
 
 
-def make_orchestrator(tmp_path, broker, agent, now, mode=TradingMode.BROKER, env="uat", limits=None, events=None, enable_news=False):
+def make_orchestrator(tmp_path, broker, agent, now, mode=TradingMode.BROKER, env="uat", limits=None, events=None, enable_news=False, continuous_trading=None):
     return Orchestrator(settings=make_settings(tmp_path, mode, env), limits=limits or load_risk_limits(),
                         universe=load_universe(), events=events or Events(), broker=broker,
                         ledger=Ledger(tmp_path / "ledger.db"), agent=agent, now=lambda: now,
-                        enable_news=enable_news)
+                        enable_news=enable_news, continuous_trading=continuous_trading)
