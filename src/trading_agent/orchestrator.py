@@ -183,9 +183,13 @@ class Orchestrator:
                 did = trades[ex.symbol]["decision_id"]
                 self.ledger.add_pending_action(f"close:{did}:{cycle_id[:8]}", cycle_id,
                                                ex.model_dump_json())
-                rep.add(f"exit queued for {ex.symbol}: {ex.reason[:80]}")
             else:
                 rep.add(f"exit for {ex.symbol} ignored (held={bool(held)}, grounded={grounded}, system trade={ex.symbol in trades})")
+        try:
+            from .alerts import alert_research_summary
+            alert_research_summary(to_trading_date(self.now()).isoformat(), len(output.proposals), len(evidence), rep.notes)
+        except Exception:
+            pass
         return rep
 
     def _consider_entry(self, trade: TradeProposal, cycle_id: str, cycle_ev: dict, features: dict, quotes: dict,
@@ -216,6 +220,11 @@ class Orchestrator:
         self.ledger.add_pending_action(decision_id, cycle_id, prop.model_dump_json())
         rep.add(f"{trade.symbol}: queued {sized.quantity} @ {sized.limit_price} (stop {sized.stop_loss}, "
                 f"target {sized.take_profit}, net edge {v.metrics.get('net_edge_pct')}%)")
+        try:
+            from .alerts import alert_trade_queued
+            alert_trade_queued(trade.symbol, sized.quantity, sized.limit_price, sized.stop_loss, sized.take_profit, trade.thesis)
+        except Exception:
+            pass
 
     # -- execute ------------------------------------------------------------------------
 
@@ -277,6 +286,11 @@ class Orchestrator:
             state = self.exec.submit(req, prop.decision_id, "ENTRY")
             self.ledger.set_pending_status(prop.decision_id, "SUBMITTED")
             rep.add(f"{t.symbol}: BUY {sized.quantity} @ {sized.limit_price} -> {state.value}")
+            try:
+                from .alerts import alert_order_submitted
+                alert_order_submitted(t.symbol, "BUY", sized.quantity, sized.limit_price, is_shadow=not self.sends_real_orders_to_prod)
+            except Exception:
+                pass
             account = self._account()  # refresh so the next order sees this one's cash and exposure
         return rep
 
@@ -304,6 +318,11 @@ class Orchestrator:
         if qty > 0:
             state = self.exec.exit_trade(did, trade["symbol"], qty, q.bid, "agent_thesis_exit", today)
             rep.add(f"{trade['symbol']}: agent exit SELL {qty} -> {state.value}")
+            try:
+                from .alerts import alert_trade_exited
+                alert_trade_exited(trade["symbol"], qty, q.bid, "agent_thesis_exit")
+            except Exception:
+                pass
         self.ledger.set_pending_status(row["decision_id"], "SUBMITTED")
 
     def _cancel_working_entries(self, rep: CycleReport) -> None:
@@ -377,5 +396,10 @@ class Orchestrator:
                 qty = int(min(t["quantity"], held.quantity))
                 state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, q.bid, reason, today)
                 rep.add(f"{t['symbol']}: {reason} -> SELL {qty} {state.value}")
+                try:
+                    from .alerts import alert_trade_exited
+                    alert_trade_exited(t["symbol"], qty, q.bid, reason)
+                except Exception:
+                    pass
         rep.add(f"equity {account.equity:.2f}, {len(trades)} open system trades, reconciled={reconciled}")
         return rep

@@ -32,6 +32,18 @@ class KillSwitch:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.engaged():
             self.path.write_text(json.dumps({"reason": reason, "by": by, "at": utcnow().isoformat()}))
+            try:
+                from .alerts import alert_killswitch
+                alert_killswitch(f"{reason} (by {by})", engaged=True)
+            except Exception:
+                pass
 
     def release(self) -> None:
+        was_engaged = self.engaged()
         self.path.unlink(missing_ok=True)
+        if was_engaged:
+            try:
+                from .alerts import alert_killswitch
+                alert_killswitch("", engaged=False)
+            except Exception:
+                pass
