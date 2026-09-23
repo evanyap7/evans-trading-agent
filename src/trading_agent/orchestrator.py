@@ -42,7 +42,8 @@ class CycleReport:
 
 class Orchestrator:
     def __init__(self, *, settings: Settings, limits: RiskLimits, universe: Universe, events: Events, broker: Broker,
-                 ledger: Ledger, agent: ResearchAgent, now: Callable[[], datetime] = utcnow, enable_news: bool = True):
+                 ledger: Ledger, agent: ResearchAgent, now: Callable[[], datetime] = utcnow, enable_news: bool = True,
+                 continuous_trading: bool | None = None):
         self.settings = settings
         self.limits = limits
         self.universe = universe
@@ -53,6 +54,9 @@ class Orchestrator:
         self.agent = agent
         self.now = now
         self.enable_news = enable_news
+        self.continuous_trading = (
+            continuous_trading if continuous_trading is not None else settings.continuous_trading
+        )
         self.kill = KillSwitch(settings.state_dir)
         self.exec = ExecutionEngine(broker, ledger, limits, send_orders=settings.trading_mode == TradingMode.BROKER)
 
@@ -422,6 +426,15 @@ class Orchestrator:
                 reports.append(self._guarded("execute", self.execute))
             elif local >= EXECUTE_AFTER and self._claim_cycle("execute", td):
                 reports.append(self._guarded("execute", self.execute))
+
+            # Continuous intraday trading: every 15 minutes during regular hours
+            if self.continuous_trading:
+                intraday_slot = f"{td.isoformat()}:{local.hour}:{local.minute // 15}"
+                if local >= EXECUTE_AFTER and self._claim_cycle("intraday_trade", intraday_slot):
+                    reports.append(self._guarded("research", self.research))
+                    if self.ledger.pending():
+                        reports.append(self._guarded("execute", self.execute))
+
             reports.append(self._guarded("monitor", self.monitor))
         elif local >= RESEARCH_AFTER and self._claim_cycle("research", td):
             reports.append(self._guarded("research", self.research))
@@ -451,11 +464,12 @@ class Orchestrator:
             return None
         return q.bid if q.bid > 0 else (q.last if q.last > 0 else None)
 
-    def _claim_cycle(self, kind: str, td: date) -> bool:
-        key = f"{kind}:{td.isoformat()}"
+    def _claim_cycle(self, kind: str, td_or_slot: date | str) -> bool:
+        slot_str = td_or_slot.isoformat() if isinstance(td_or_slot, date) else str(td_or_slot)
+        key = f"{kind}:{slot_str}"
         if self.ledger.has_event("cycle_run", key):
             return False
-        self.ledger.append("cycle_run", {"kind": kind, "trading_date": td.isoformat()}, decision_id=key)
+        self.ledger.append("cycle_run", {"kind": kind, "trading_date": slot_str}, decision_id=key)
         return True
 
     # -- monitor ------------------------------------------------------------------------
@@ -493,6 +507,9 @@ class Orchestrator:
             if ref is None:
                 rep.add(f"{t['symbol']}: no fresh quote; software exits skipped (broker stop still active)")
                 continue
+            qty = int(min(t["quantity"], held.quantity))
+            gain_usd = (q.last - t["entry_price"]) * qty
+            target = getattr(self.limits.account, "daily_profit_target_usd", 10.0)
             reason = None
             if q.last <= t["stop_loss"]:
                 reason = "stop_breached"
@@ -500,8 +517,9 @@ class Orchestrator:
                 reason = "take_profit"
             elif today >= date.fromisoformat(t["time_stop_date"]):
                 reason = "time_stop"
+            elif gain_usd >= target:
+                reason = f"daily_target_hit_+${gain_usd:.2f}"
             if reason:
-                qty = int(min(t["quantity"], held.quantity))
                 state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, ref, reason, today)
                 rep.add(f"{t['symbol']}: {reason} -> SELL {qty} {state.value}")
                 try:
