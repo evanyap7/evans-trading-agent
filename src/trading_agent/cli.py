@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 
-from .agents import BaselineMomentumAgent, ClaudeResearchAgent
+from .agents import BaselineMomentumAgent, ClaudeResearchAgent, TieredResearchAgent
 from .config import TradingMode, load_events, load_risk_limits, load_settings, load_universe
 from .killswitch import KillSwitch
 from .ledger import Ledger
@@ -53,7 +53,11 @@ def _build(args) -> Orchestrator:
         broker = WebullBroker(settings.webull_account_id, settings.webull_region, settings.webull_environment)
     if settings.trading_mode == TradingMode.BROKER and settings.is_production and not limits.live_trading.enabled:
         print("NOTE: prod + broker mode but live_trading.enabled is false: every entry will be risk-rejected.")
-    agent = ClaudeResearchAgent(settings.llm_model) if args.agent == "llm" else BaselineMomentumAgent()
+    agent = (
+        TieredResearchAgent(model_reasoning=settings.llm_model, model_fast=settings.llm_model_fast)
+        if args.agent == "llm"
+        else BaselineMomentumAgent()
+    )
     ledger = Ledger(settings.state_dir / "ledger.db")
     return Orchestrator(settings=settings, limits=limits, universe=universe, events=events, broker=broker,
                         ledger=ledger, agent=agent)

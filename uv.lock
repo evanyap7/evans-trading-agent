@@ -1081,10 +1081,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-]
-
-[package.optional-dependencies]
-webull = [
     { name = "webull-openapi-python-sdk" },
 ]
 
@@ -1099,9 +1095,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "webull-openapi-python-sdk", marker = "extra == 'webull'", specifier = ">=3.0.2" },
+    { name = "webull-openapi-python-sdk", specifier = ">=3.0.2" },
 ]
-provides-extras = ["webull"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8" }]

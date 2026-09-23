@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Protocol
 
-from .schemas import AgentOutput, Evidence, TradeProposal
+from .schemas import AgentOutput, Evidence, Strict, TradeProposal
 
 SYSTEM_PROMPT = """You are an autonomous swing-trading portfolio manager for a small, long-only US stock and ETF account.
 
@@ -73,10 +73,24 @@ def render_context(ctx: AgentContext) -> str:
     return "\n\n".join(parts)
 
 
+SCREENER_SYSTEM_PROMPT = """You are a fast, quantitative market screener for a swing-trading portfolio.
+Your role: review the universe, market regime, and technical features. Filter out securities that have no actionable setup.
+Select only the top 2-5 liquid symbols that exhibit clear momentum, trend alignment (above 50/200-day SMAs), or high relative strength with clean risk/reward potential.
+If the market benchmark regime is risk-off or no setups qualify, set is_risk_on to false or return an empty candidate list.
+"""
+
+
+class ScreeningResult(Strict):
+    is_risk_on: bool
+    market_view: str
+    candidate_symbols: list[str] = []
+    screening_notes: str
+
+
 class ClaudeResearchAgent:
     name = "llm"
 
-    def __init__(self, model: str = "claude-opus-5", effort: str = "high"):
+    def __init__(self, model: str = "claude-3-7-sonnet-latest", effort: str = "high"):
         import anthropic
 
         self.model = model
@@ -84,20 +98,97 @@ class ClaudeResearchAgent:
         self.client = anthropic.Anthropic()
 
     def propose(self, ctx: AgentContext) -> AgentOutput:
-        response = self.client.beta.messages.parse(
-            model=self.model,
-            max_tokens=16000,
-            system=SYSTEM_PROMPT,
-            thinking={"type": "adaptive"},
-            output_config={"effort": self.effort},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-            messages=[{"role": "user", "content": render_context(ctx)}],
-            output_format=AgentOutput,
-        )
+        kwargs: dict = {
+            "model": self.model,
+            "max_tokens": 16000,
+            "system": SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": render_context(ctx)}],
+            "output_format": AgentOutput,
+        }
+        if "3-7" in self.model:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 2048}
+
+        response = self.client.beta.messages.parse(**kwargs)
         if response.stop_reason != "end_turn" or response.parsed_output is None:
             return AgentOutput(market_view="", no_trade_reason=f"model stopped: {response.stop_reason}")
         return response.parsed_output
+
+
+class TieredResearchAgent:
+    """Cost-efficient 2-tier intelligence:
+    - Tier 1 (Fast Screener, e.g. Claude 3.5 Haiku): Filters 20-50 tickers down to the top 2-5 setups.
+    - Tier 2 (Deep Strategist, e.g. Claude 3.7 Sonnet): Formulates precise entry, stop loss, and theses.
+    """
+
+    name = "tiered-llm"
+
+    def __init__(
+        self,
+        model_reasoning: str = "claude-3-7-sonnet-latest",
+        model_fast: str = "claude-3-5-haiku-latest",
+    ):
+        import anthropic
+
+        self.model_reasoning = model_reasoning
+        self.model_fast = model_fast
+        self.client = anthropic.Anthropic()
+        self.strategist = ClaudeResearchAgent(model=model_reasoning)
+
+    def propose(self, ctx: AgentContext) -> AgentOutput:
+        # If the universe is already tiny (<=3 symbols), bypass screening directly to the strategist
+        if len(ctx.universe) <= 3:
+            return self.strategist.propose(ctx)
+
+        # Tier 1: Fast Screening
+        screener_context = (
+            f"Decision date: {ctx.as_of.isoformat()}\n"
+            f"Market Universe: {json.dumps(list(ctx.universe.keys()))}\n"
+            f"Open Positions: {json.dumps([p.get('symbol') for p in ctx.positions])}\n"
+            f"Technical Features Summary:\n"
+            + "\n".join(
+                f"{sym}: close={f.get('close')}, ret_60d={f.get('ret_60d_pct')}%, "
+                f"above_sma50={(f.get('dist_sma50_pct') or -1) > 0}, above_sma200={(f.get('dist_sma200_pct') or -1) > 0}, "
+                f"atr14={f.get('atr14')}"
+                for sym, f in ctx.features.items()
+            )
+        )
+
+        try:
+            screen_resp = self.client.beta.messages.parse(
+                model=self.model_fast,
+                max_tokens=4000,
+                system=SCREENER_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": screener_context}],
+                output_format=ScreeningResult,
+            )
+            screen = screen_resp.parsed_output
+        except Exception as e:
+            # Fallback gracefully to direct strategist if fast screener fails
+            return self.strategist.propose(ctx)
+
+        if screen is None or not screen.is_risk_on or not screen.candidate_symbols:
+            return AgentOutput(
+                market_view=screen.market_view if screen else "screener risk-off",
+                no_trade_reason=f"Screener: {screen.screening_notes if screen else 'no qualifying candidates'}",
+            )
+
+        # Tier 2: Deep Strategist on shortlisted candidates only
+        candidates = set(screen.candidate_symbols)
+        filtered_universe = {s: u for s, u in ctx.universe.items() if s in candidates}
+        filtered_evidence = [e for e in ctx.evidence if e.symbol is None or e.symbol in candidates]
+        filtered_features = {s: f for s, f in ctx.features.items() if s in candidates}
+
+        focused_ctx = AgentContext(
+            as_of=ctx.as_of,
+            evidence=filtered_evidence,
+            universe=filtered_universe,
+            account_summary=ctx.account_summary,
+            positions=ctx.positions,
+            known_earnings=ctx.known_earnings,
+            features=filtered_features,
+        )
+
+        return self.strategist.propose(focused_ctx)
 
 
 class BaselineMomentumAgent:

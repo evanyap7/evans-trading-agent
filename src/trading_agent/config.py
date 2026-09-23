@@ -110,7 +110,8 @@ class Settings(Frozen):
     webull_region: str
     webull_account_id: str
     state_dir: Path
-    llm_model: str
+    llm_model: str = "claude-3-7-sonnet-latest"
+    llm_model_fast: str = "claude-3-5-haiku-latest"
 
     @property
     def is_production(self) -> bool:
@@ -151,5 +152,6 @@ def load_settings() -> Settings:
         webull_region=os.environ.get("WEBULL_REGION", "sg").lower(),
         webull_account_id=os.environ.get("WEBULL_ACCOUNT_ID", ""),
         state_dir=Path(os.environ.get("STATE_DIR", PROJECT_ROOT / "state")),
-        llm_model=os.environ.get("LLM_MODEL", "claude-opus-5"),
+        llm_model=os.environ.get("LLM_MODEL", "claude-3-7-sonnet-latest"),
+        llm_model_fast=os.environ.get("LLM_MODEL_FAST", "claude-3-5-haiku-latest"),
     )
