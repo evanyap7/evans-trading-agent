@@ -211,7 +211,7 @@ class WebullBroker:
             for i in range(0, len(symbols), 20):
                 resp = self._data.market_data.get_batch_history_bar(symbols[i:i + 20], Category.US_STOCK.name,
                                                                     Timespan.D.name, str(count))
-                for group in _unwrap_list(_json(resp), "data"):
+                for group in _unwrap_list(_json(resp), "result", "data"):  # SG returns {"result": [...]}
                     # A bar with no timestamp is dropped, never stamped "now": that would make stale data look fresh.
                     bars = [Bar(ts=ts, open=_f(b["open"]), high=_f(b["high"]),
                                 low=_f(b["low"]), close=_f(b["close"]), volume=_f(b.get("volume")))

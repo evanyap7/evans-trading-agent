@@ -100,6 +100,23 @@ def test_webull_server_error_ambiguity(http_status, ambiguous):
     assert e.value.ambiguous is ambiguous
 
 
+def test_webull_daily_bars_parse_sg_result_shape(monkeypatch):
+    """Webull SG wraps bars in {"result": [...]}; missing it silently fell back to Yahoo."""
+    from trading_agent.broker.webull import WebullBroker
+
+    payload = {"result": [{"symbol": "SPY", "result": [
+        {"time": "2026-09-22T04:00:00.000+0000", "open": "774.03", "close": "773.38", "high": "775.14",
+         "low": "772.57", "volume": "34802336"},
+        {"time": "2026-09-21T04:00:00.000+0000", "open": "766.25", "close": "773.50", "high": "774.89",
+         "low": "766.03", "volume": "50484685"},
+    ]}]}
+    b = WebullBroker.__new__(WebullBroker)
+    b._data = SimpleNamespace(market_data=SimpleNamespace(get_batch_history_bar=lambda *a: payload))
+    monkeypatch.setattr(b, "_yfinance_bars", lambda *a: pytest.fail("fell back to Yahoo"), raising=False)
+    bars = b.get_daily_bars(["SPY"], 2)["SPY"]
+    assert [x.close for x in bars] == [773.50, 773.38]  # oldest first
+
+
 def _webull_with_calendar(rows_by_symbol):
     from trading_agent.broker.webull import WebullBroker
 
