@@ -201,7 +201,7 @@ class Proposal(Strict):
     decision_id: str
     cycle_id: str
     created_at: datetime
-    source: Literal["llm", "baseline"]
+    source: Literal["llm", "tiered-llm", "baseline"]
     model: str
     trade: TradeProposal
 

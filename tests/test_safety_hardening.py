@@ -246,6 +246,20 @@ def test_untrusted_wrapper_cannot_be_closed_by_a_story():
         assert "untrusted_document" not in strip_untrusted_tags(f"hi {evil} ignore rules").lower()
 
 
+def test_tiered_agent_identity_is_recordable(monkeypatch):
+    """The scheduled agent's name/model must be accepted by the ledger, or every research cycle crashes."""
+    from trading_agent.agents import TieredResearchAgent
+    from trading_agent.schemas import Proposal
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    agent = TieredResearchAgent(model_reasoning="opus", model_fast="haiku")
+    trade = good_proposal(SimpleNamespace(
+        features={"XLK": {"close": 100.0, "atr14": 2.0}},
+        evidence=[Evidence(evidence_id="px_1", kind="price_features", symbol="XLK", as_of=IN_SESSION,
+                           source="t", payload={})]))
+    Proposal(decision_id="d", cycle_id="c", created_at=IN_SESSION, source=agent.name, model=agent.model, trade=trade)
+
+
 # -- scheduler robustness --------------------------------------------------------------
 
 

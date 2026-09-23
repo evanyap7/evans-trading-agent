@@ -150,6 +150,7 @@ class TieredResearchAgent:
 
         self.model_reasoning = model_reasoning
         self.model_fast = model_fast
+        self.model = f"{model_fast}+{model_reasoning}"  # recorded with every proposal
         self.client = anthropic.Anthropic()
         self.strategist = ClaudeResearchAgent(model=model_reasoning)
 
