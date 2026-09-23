@@ -73,6 +73,8 @@ def _unwrap_list(data: Any, *keys: str) -> list[dict]:
 
 class WebullBroker:
     name = "webull"
+    _cached_account: AccountState | None = None
+    _cached_account_time: float = 0.0
 
     def __init__(self, account_id: str, region: str = "sg", environment: str = "uat"):
         from webull.core.client import ApiClient
@@ -99,14 +101,14 @@ class WebullBroker:
         self._cached_account: AccountState | None = None
         self._cached_account_time: float = 0.0
 
-    def _call_with_retry(self, fn, max_retries: int = 2, delay: float = 2.0):
+    def _call_with_retry(self, fn, max_retries: int = 3, delay: float = 2.0):
         import time
         for attempt in range(max_retries + 1):
             try:
                 return fn()
             except Exception as e:
-                err_str = str(e)
-                if ("TOO_MANY_REQUESTS" in err_str or "429" in err_str) and attempt < max_retries:
+                err_str = (str(e) + " " + getattr(e, "error_code", "")).upper()
+                if ("TOO_MANY_REQUESTS" in err_str or "TOOMANYREQUESTS" in err_str or "429" in err_str) and attempt < max_retries:
                     time.sleep(delay * (attempt + 1))
                     continue
                 raise
@@ -330,13 +332,19 @@ class WebullBroker:
         return None
 
     def cancel(self, client_order_id: str) -> None:
-        _json(self._trade.order_v3.cancel_order(self.account_id, client_order_id))
+        _json(self._call_with_retry(lambda: self._trade.order_v3.cancel_order(self.account_id, client_order_id)))
 
     def get_order(self, client_order_id: str) -> BrokerOrder:
         from webull.core.exception.exceptions import ServerException
 
+        cached = getattr(self, "_cached_account", None)
+        if cached and cached.open_orders:
+            for o in cached.open_orders:
+                if o.client_order_id == client_order_id:
+                    return o
+
         try:
-            data = _json(self._trade.order_v3.get_order_detail(self.account_id, client_order_id))
+            data = _json(self._call_with_retry(lambda: self._trade.order_v3.get_order_detail(self.account_id, client_order_id)))
         except ServerException as e:
             if "NOT_FOUND" in str(getattr(e, "error_code", "")).upper() or "not exist" in str(e).lower():
                 return BrokerOrder(client_order_id=client_order_id, symbol="", side="BUY", order_type="",

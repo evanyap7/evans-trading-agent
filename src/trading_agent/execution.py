@@ -107,7 +107,13 @@ class ExecutionEngine:
         current = OrderState(row["state"])
         if current in TERMINAL_STATES:
             return current
-        bo = self.broker.get_order(coid)
+        try:
+            bo = self.broker.get_order(coid)
+        except Exception as e:
+            err_str = (str(e) + " " + getattr(e, "error_code", "")).upper()
+            if "TOO_MANY_REQUESTS" in err_str or "TOOMANYREQUESTS" in err_str or "429" in err_str:
+                return current
+            raise
         if bo.status == BrokerOrderStatus.NOT_FOUND:
             age = utcnow() - datetime.fromisoformat(row["updated_at"])
             if current in (OrderState.UNKNOWN_RECONCILE, OrderState.SUBMITTING) and age > UNKNOWN_GRACE:
