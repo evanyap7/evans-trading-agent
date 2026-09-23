@@ -20,8 +20,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 import feedparser
+import requests
 
 from .schemas import Evidence, utcnow
+
+FEED_TIMEOUT_SECONDS = 10
 
 MACRO_FEEDS = {
     "Wall Street Journal Markets": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
@@ -40,7 +43,15 @@ def _clean_text(raw: str) -> str:
         return ""
     text = _TAG_RE.sub(" ", raw)
     text = re.sub(r"\s+", " ", text).strip()
-    return text.replace("</untrusted_document>", "")
+    return strip_untrusted_tags(text)
+
+
+_UNTRUSTED_TAG_RE = re.compile(r"<\s*/?\s*untrusted_document[^>]*>?", re.IGNORECASE)
+
+
+def strip_untrusted_tags(text: str) -> str:
+    """Remove any spelling of the wrapper tag so a story cannot 'close' its sandbox and speak as the system."""
+    return _UNTRUSTED_TAG_RE.sub("", text)
 
 
 def _eid(source: str, symbol: str | None, title: str) -> str:
@@ -65,7 +76,10 @@ def fetch_macro_news(max_per_feed: int = 4) -> list[Evidence]:
     evidence: list[Evidence] = []
     for source_name, feed_url in MACRO_FEEDS.items():
         try:
-            feed = feedparser.parse(feed_url)
+            # feedparser's own fetch has no timeout; a hung feed would stall the whole tick (and monitoring).
+            resp = requests.get(feed_url, timeout=FEED_TIMEOUT_SECONDS, headers={"User-Agent": "trading-agent/0.1"})
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.content)
             for entry in feed.entries[:max_per_feed]:
                 title = _clean_text(getattr(entry, "title", ""))
                 summary = _clean_text(getattr(entry, "summary", "")) or title

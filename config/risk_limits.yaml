@@ -7,6 +7,8 @@ live_trading:
   permit_shorting: false
   permit_margin: false
   permit_options: false
+  # false: the agent may only sell positions it opened itself; your hand-bought holdings are never touched.
+  agent_may_close_manual_positions: false
 
 account:
   max_position_pct: 50        # calibrated for ~$1,000 cash portfolio (allows 1-2 shares of large caps)
@@ -37,7 +39,10 @@ execution:
   price_collar_pct: 0.5       # BUY limit may not exceed the ask by more than this
   slippage_bps: 5             # per side, used in cost estimates
   fee_per_order_usd: 0        # Webull SG commission + platform fee
-  broker_side_stops: true     # place a GTC STOP_LOSS at the broker once an entry fills
+  broker_side_stops: true     # place a GTC STOP_LOSS at the broker once an entry fills (re-armed if missing)
+  min_price_usd: 5            # no new entries below this share price (penny-stock guard)
+  min_avg_dollar_volume_usd: 20000000  # 20-day average dollar volume required for new entries
+  max_exit_attempts_per_day: 3         # sell retries per trade per day if the broker rejects an exit
 
 events:
   earnings_blackout_days: 2

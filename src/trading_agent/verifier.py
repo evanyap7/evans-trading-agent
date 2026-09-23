@@ -48,6 +48,12 @@ def verify(
     m["bar_age_days"] = bar_age
     if bar_age > ex.max_bar_age_days:
         fails.append(f"daily bars stale ({bar_age}d)")
+    close = float(features["close"])
+    if close < ex.min_price_usd:
+        fails.append(f"price {close:.2f} below minimum {ex.min_price_usd}")
+    dollar_volume = float(features.get("avg_dollar_volume_20d") or 0)
+    if dollar_volume < ex.min_avg_dollar_volume_usd:
+        fails.append(f"20d avg dollar volume {dollar_volume:,.0f} below minimum {ex.min_avg_dollar_volume_usd:,.0f}")
     quote_ok = quote is not None and quote.age_seconds(now) <= ex.max_quote_age_seconds and math.isfinite(quote.spread_pct)
     if require_fresh_quote and not quote_ok:
         fails.append("no fresh quote")

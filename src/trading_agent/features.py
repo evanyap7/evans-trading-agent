@@ -87,7 +87,7 @@ def build_evidence(bars_by_symbol: dict[str, list[Bar]], quotes: dict[str, Quote
     for sym, q in sorted(quotes.items()):
         payload = {"bid": q.bid, "ask": q.ask, "last": q.last, "spread_pct": round(q.spread_pct, 3)}
         evidence.append(Evidence(evidence_id=_eid("qt", sym, q.fetched_at, payload), kind="quote", symbol=sym,
-                                 as_of=q.fetched_at, source="webull.snapshot", payload=payload))
+                                 as_of=q.data_time, source=f"{q.source}.quote", payload=payload))
     if benchmark in features:
         above50 = [s for s, f in features.items() if (f.get("dist_sma50_pct") or 0) > 0]
         b = features[benchmark]

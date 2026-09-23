@@ -138,31 +138,113 @@ class ExecutionEngine:
             self.ledger.open_trade(decision_id, row["symbol"], qty, px, prop.exit.stop_loss, prop.exit.take_profit,
                                    add_trading_days(today, prop.exit.time_stop_days))
             if self.limits.execution.broker_side_stops:
-                self.place_protective_stop(decision_id, row["symbol"], int(qty), prop.exit.stop_loss)
+                self.ensure_protective_stop(decision_id, row["symbol"], int(qty), prop.exit.stop_loss)
         elif row["purpose"] in ("STOP", "EXIT"):
-            open_ids = {t["decision_id"] for t in self.ledger.open_trades()}
-            if decision_id in open_ids:
+            trade = next((t for t in self.ledger.open_trades() if t["decision_id"] == decision_id), None)
+            if trade is None:
+                return
+            if qty + 1e-9 < trade["quantity"]:
+                # Partial exit: keep managing (and protecting) the shares still held.
+                self.ledger.reduce_trade(decision_id, trade["quantity"] - qty)
+            else:
                 self.ledger.close_trade(decision_id, "stop_filled" if row["purpose"] == "STOP" else "exit_filled")
 
-    def place_protective_stop(self, decision_id: str, symbol: str, qty: int, stop: float) -> OrderState:
-        req = OrderRequest(client_order_id=client_order_id(decision_id, "STOP"), symbol=symbol, side="SELL",
-                           order_type="STOP_LOSS", quantity=qty, time_in_force="GTC", stop_price=round(stop, 2))
-        return self.submit(req, decision_id, "STOP")
+    # -- protective stops -----------------------------------------------------------
 
-    def exit_trade(self, decision_id: str, symbol: str, qty: int, bid: float, reason: str, today: date) -> OrderState:
-        """Cancel the protective stop, then sell with a marketable limit. One attempt per trading day."""
-        stop_coid = client_order_id(decision_id, "STOP")
-        stop_row = self.ledger.get_order(stop_coid)
-        if stop_row is not None:
-            self.cancel(stop_coid)
-            state = OrderState(self.ledger.get_order(stop_coid)["state"])
+    MAX_STOP_ORDERS_PER_TRADE = 10
+
+    def stop_orders(self, decision_id: str) -> list:
+        return list(self.ledger.iter_rows(
+            "SELECT * FROM orders WHERE decision_id=? AND purpose='STOP' ORDER BY created_at, rowid", (decision_id,)))
+
+    def active_stop(self, decision_id: str):
+        """The most recent protective stop for a trade, whatever its state."""
+        rows = self.stop_orders(decision_id)
+        return rows[-1] if rows else None
+
+    def place_protective_stop(self, decision_id: str, symbol: str, qty: int, stop: float) -> OrderState:
+        n = len(self.stop_orders(decision_id))
+        purpose_key = "STOP" if n == 0 else f"STOP:{n + 1}"  # first stop keeps its historical id
+        req = OrderRequest(client_order_id=client_order_id(decision_id, purpose_key), symbol=symbol, side="SELL",
+                           order_type="STOP_LOSS", quantity=qty, time_in_force="GTC", stop_price=round(stop, 2))
+        state = self.submit(req, decision_id, "STOP")
+        if state not in (OrderState.ACKNOWLEDGED, OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.SHADOW):
+            self.ledger.append("unprotected_position", {"symbol": symbol, "qty": qty, "stop": stop,
+                                                        "stop_state": state.value}, decision_id=decision_id)
+            try:
+                from .alerts import alert_unprotected
+                alert_unprotected(symbol, qty, stop, state.value)
+            except Exception:
+                pass
+        return state
+
+    def ensure_protective_stop(self, decision_id: str, symbol: str, qty: int, stop: float) -> OrderState | None:
+        """Place a broker-side stop if the trade has none working. Bounded so a broker that keeps
+        rejecting cannot turn this into an order storm."""
+        if qty < 1:
+            return None
+        row = self.active_stop(decision_id)
+        if row is not None:
+            state = OrderState(row["state"])
+            if state not in (OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED):
+                return state  # working, pending, unknown (being reconciled), filled or shadow
+        terminal = [st.value for st in TERMINAL_STATES]
+        live_exit = self.ledger.db.execute(
+            f"SELECT 1 FROM orders WHERE decision_id=? AND purpose='EXIT' AND state NOT IN ({','.join('?' * len(terminal))}) LIMIT 1",
+            (decision_id, *terminal)).fetchone()
+        if live_exit is not None:
+            return None  # a sell is already working for these shares; a second one could oversell
+        if len(self.stop_orders(decision_id)) >= self.MAX_STOP_ORDERS_PER_TRADE:
+            return None
+        return self.place_protective_stop(decision_id, symbol, qty, stop)
+
+    # -- exits ----------------------------------------------------------------------
+
+    def _exit_slot(self, decision_id: str, today: date):
+        """Return (client_order_id, existing_row) for today's current exit attempt.
+
+        existing_row is a live or filled order to report on, or None when a fresh attempt may be sent.
+        Returns (None, None) when today's attempts are used up."""
+        for n in range(1, self.limits.execution.max_exit_attempts_per_day + 1):
+            key = f"EXIT:{today.isoformat()}" + ("" if n == 1 else f":{n}")
+            coid = client_order_id(decision_id, key)
+            row = self.ledger.get_order(coid)
+            if row is None:
+                return coid, None
+            state = OrderState(row["state"])
+            if state not in (OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED):
+                return coid, row
+        return None, None
+
+    def exit_trade(self, decision_id: str, symbol: str, qty: int, ref_price: float, reason: str, today: date) -> OrderState:
+        """Cancel the protective stop, then sell with a marketable limit.
+
+        A few attempts per trading day are allowed; the stop is only touched when an attempt will
+        actually be made, and `ensure_protective_stop` re-arms it if the sell does not go through."""
+        if qty < 1 or ref_price <= 0:
+            self.ledger.append("exit_skipped", {"reason": reason, "qty": qty, "ref_price": ref_price,
+                                                "why": "no sellable quantity or no usable price"}, decision_id=decision_id)
+            return OrderState.REJECTED
+        coid, existing = self._exit_slot(decision_id, today)
+        if existing is not None:
+            return OrderState(existing["state"])
+        if coid is None:
+            self.ledger.append("exit_attempts_exhausted", {"reason": reason, "date": today.isoformat()},
+                               decision_id=decision_id)
+            return OrderState.REJECTED
+        stop_row = self.active_stop(decision_id)
+        if stop_row is not None and OrderState(stop_row["state"]) not in TERMINAL_STATES:
+            self.cancel(stop_row["client_order_id"])
+            state = OrderState(self.ledger.get_order(stop_row["client_order_id"])["state"])
             if state == OrderState.FILLED:
                 return state  # the stop already closed the position
             if state not in TERMINAL_STATES:
                 self.ledger.append("exit_deferred", {"reason": "stop cancel not confirmed"}, decision_id=decision_id)
                 return state
-        limit = round(bid * (1 - self.limits.execution.price_collar_pct / 100), 2)
-        req = OrderRequest(client_order_id=client_order_id(decision_id, f"EXIT:{today.isoformat()}"), symbol=symbol,
-                           side="SELL", order_type="LIMIT", quantity=qty, time_in_force="DAY", limit_price=limit)
+        elif stop_row is not None and OrderState(stop_row["state"]) == OrderState.FILLED:
+            return OrderState.FILLED
+        limit = round(ref_price * (1 - self.limits.execution.price_collar_pct / 100), 2)
+        req = OrderRequest(client_order_id=coid, symbol=symbol, side="SELL", order_type="LIMIT", quantity=qty,
+                           time_in_force="DAY", limit_price=limit)
         self.ledger.append("exit_requested", {"reason": reason, "limit": limit}, decision_id=decision_id)
         return self.submit(req, decision_id, "EXIT")

@@ -179,7 +179,14 @@ class Orchestrator:
             self._consider_entry(trade, cycle_id, cycle_ev, features, quotes, account, reconciled, rep)
         for ex in output.exits:
             held = account.position(ex.symbol)
-            grounded = all(e in cycle_ev for e in ex.evidence_ids)
+            # Every id must exist, and at least one must be our own price/position data for this symbol:
+            # a news article alone (untrusted, injectable text) can never trigger a sale.
+            grounded = all(e in cycle_ev for e in ex.evidence_ids) and any(
+                cycle_ev.get(e) == ex.symbol and e.startswith(("px_", "pos_")) for e in ex.evidence_ids)
+            own_trade = ex.symbol in trades
+            if held and grounded and not own_trade and not self.limits.live_trading.agent_may_close_manual_positions:
+                rep.add(f"exit for {ex.symbol} ignored: not a system trade and agent_may_close_manual_positions is off")
+                continue
             if held and grounded:
                 did = trades[ex.symbol]["decision_id"] if ex.symbol in trades else f"portfolio_{ex.symbol}"
                 self.ledger.add_pending_action(f"close:{did}:{cycle_id[:8]}", cycle_id,
@@ -321,13 +328,22 @@ class Orchestrator:
         if held is None or held.quantity <= 0:
             self.ledger.set_pending_status(row["decision_id"], "DROPPED")
             return
+        if trade is None and not self.limits.live_trading.agent_may_close_manual_positions:
+            self.ledger.set_pending_status(row["decision_id"], "DROPPED")
+            rep.add(f"{symbol}: agent exit dropped (manual position, agent_may_close_manual_positions is off)")
+            return
+        ref = self._exit_price(q)
+        if ref is None:
+            self.ledger.set_pending_status(row["decision_id"], "DROPPED")
+            rep.add(f"{symbol}: agent exit dropped (no fresh usable price)")
+            return
         qty = int(min(trade["quantity"] if trade else held.quantity, held.quantity))
         if qty > 0:
-            state = self.exec.exit_trade(did, symbol, qty, q.bid, "agent_thesis_exit", today)
+            state = self.exec.exit_trade(did, symbol, qty, ref, "agent_thesis_exit", today)
             rep.add(f"{symbol}: agent exit SELL {qty} -> {state.value}")
             try:
                 from .alerts import alert_trade_exited
-                alert_trade_exited(symbol, qty, q.bid, "agent_thesis_exit")
+                alert_trade_exited(symbol, qty, ref, f"agent_thesis_exit ({state.value})")
             except Exception:
                 pass
         self.ledger.set_pending_status(row["decision_id"], "SUBMITTED")
@@ -367,12 +383,35 @@ class Orchestrator:
             return reports
         if is_regular_session(now):
             if local >= EXECUTE_AFTER and self._claim_cycle("execute", td):
-                reports.append(self.execute())
-            reports.append(self.monitor())
+                reports.append(self._guarded("execute", self.execute))
+            reports.append(self._guarded("monitor", self.monitor))
         elif local >= RESEARCH_AFTER and self._claim_cycle("research", td):
-            reports.append(self.research())
-            reports.append(self.monitor())
+            reports.append(self._guarded("research", self.research))
+            reports.append(self._guarded("monitor", self.monitor))
         return reports
+
+    def _guarded(self, kind: str, cycle: Callable[[], CycleReport]) -> CycleReport:
+        """A crash in one cycle (e.g. execute) must never stop the monitor pass that protects open positions."""
+        try:
+            return cycle()
+        except Exception as e:
+            self.ledger.append("cycle_error", {"kind": kind, "error": f"{type(e).__name__}: {e}"[:500]})
+            try:
+                from .alerts import alert_cycle_error
+                alert_cycle_error(kind, f"{type(e).__name__}: {e}")
+            except Exception:
+                pass
+            rep = CycleReport(kind)
+            rep.add(f"CYCLE FAILED: {type(e).__name__}: {e}")
+            return rep
+
+    MAX_EXIT_QUOTE_AGE_SECONDS = 900
+
+    def _exit_price(self, q) -> float | None:
+        """Reference price for a sell: the bid, else last. None if the quote is too old to act on."""
+        if q is None or q.age_seconds(self.now()) > self.MAX_EXIT_QUOTE_AGE_SECONDS:
+            return None
+        return q.bid if q.bid > 0 else (q.last if q.last > 0 else None)
 
     def _claim_cycle(self, kind: str, td: date) -> bool:
         key = f"{kind}:{td.isoformat()}"
@@ -407,7 +446,14 @@ class Orchestrator:
         for t in trades:
             q = quotes.get(t["symbol"])
             held = account.position(t["symbol"])
-            if q is None or held is None:
+            if held is None:
+                continue
+            if self.exec.send_orders and self.limits.execution.broker_side_stops:
+                self.exec.ensure_protective_stop(t["decision_id"], t["symbol"], int(min(t["quantity"], held.quantity)),
+                                                 t["stop_loss"])
+            ref = self._exit_price(q)
+            if ref is None:
+                rep.add(f"{t['symbol']}: no fresh quote; software exits skipped (broker stop still active)")
                 continue
             reason = None
             if q.last <= t["stop_loss"]:
@@ -418,11 +464,11 @@ class Orchestrator:
                 reason = "time_stop"
             if reason:
                 qty = int(min(t["quantity"], held.quantity))
-                state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, q.bid, reason, today)
+                state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, ref, reason, today)
                 rep.add(f"{t['symbol']}: {reason} -> SELL {qty} {state.value}")
                 try:
                     from .alerts import alert_trade_exited
-                    alert_trade_exited(t["symbol"], qty, q.bid, reason)
+                    alert_trade_exited(t["symbol"], qty, ref, f"{reason} ({state.value})")
                 except Exception:
                     pass
         rep.add(f"equity {account.equity:.2f}, {len(trades)} open system trades, reconciled={reconciled}")

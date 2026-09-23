@@ -49,6 +49,7 @@ class Quote(Strict):
     volume: float = 0
     last_trade_time: datetime | None = None
     fetched_at: datetime
+    source: str = "broker"
 
     @property
     def mid(self) -> float:
@@ -60,8 +61,13 @@ class Quote(Strict):
             return math.inf
         return (self.ask - self.bid) / self.mid * 100
 
+    @property
+    def data_time(self) -> datetime:
+        """When the market data itself was produced: the older of the trade time and our fetch time."""
+        return min(self.fetched_at, self.last_trade_time) if self.last_trade_time else self.fetched_at
+
     def age_seconds(self, now: datetime) -> float:
-        return (now - self.fetched_at).total_seconds()
+        return (now - self.data_time).total_seconds()
 
 
 class Position(Strict):

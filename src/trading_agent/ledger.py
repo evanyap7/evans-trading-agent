@@ -253,6 +253,10 @@ class Ledger:
     def open_trades(self) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM trades WHERE status='OPEN'").fetchall()
 
+    def reduce_trade(self, decision_id: str, remaining_quantity: float) -> None:
+        self.db.execute("UPDATE trades SET quantity=? WHERE decision_id=?", (remaining_quantity, decision_id))
+        self.append("trade_reduced", {"remaining_quantity": remaining_quantity}, decision_id=decision_id)
+
     def close_trade(self, decision_id: str, reason: str) -> None:
         self.db.execute("UPDATE trades SET status='CLOSED', closed_at=?, exit_reason=? WHERE decision_id=?",
                         (utcnow().isoformat(), reason, decision_id))

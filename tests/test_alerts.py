@@ -66,7 +66,7 @@ def test_alert_helpers(mock_send):
 
     mock_send.reset_mock()
     alert_trade_exited("NVDA", 10, 135.0, "take_profit")
-    assert "Position Exited" in mock_send.call_args[0][0]
+    assert "Exit Order" in mock_send.call_args[0][0]
     assert "take_profit" in mock_send.call_args[0][0]
 
     mock_send.reset_mock()

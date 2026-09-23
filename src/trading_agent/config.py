@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -29,40 +29,55 @@ class LiveTradingLimits(Frozen):
     permit_shorting: bool = False
     permit_margin: bool = False
     permit_options: bool = False
+    # Lets the agent sell positions it did not open (e.g. bought by hand). Off = it may only close its own trades.
+    agent_may_close_manual_positions: bool = False
+
+    @model_validator(mode="after")
+    def _unsupported_permissions_off(self) -> "LiveTradingLimits":
+        # The code has no short, margin or options handling; turning these on would silently do nothing safe.
+        if self.permit_shorting or self.permit_margin or self.permit_options:
+            raise ValueError("permit_shorting/permit_margin/permit_options are not supported and must stay false")
+        if not set(self.allowed_instruments) <= {"EQUITY", "ETF"}:
+            raise ValueError("allowed_instruments may only contain EQUITY and ETF")
+        return self
 
 
 class AccountLimits(Frozen):
-    max_position_pct: float
-    max_sector_pct: float
-    max_total_exposure_pct: float
-    max_risk_per_trade_pct: float
-    max_portfolio_risk_pct: float
-    unknown_stop_risk_pct: float
-    max_daily_loss_pct: float
-    max_drawdown_pct: float
-    max_new_trades_per_day: int
-    max_order_value_usd: float
-    max_adv_participation_pct: float
+    # Hard ceilings below are code-level sanity bounds: a typo in the YAML fails loudly instead of trading.
+    max_position_pct: float = Field(gt=0, le=100)
+    max_sector_pct: float = Field(gt=0, le=100)
+    max_total_exposure_pct: float = Field(gt=0, le=100)  # cash account, no margin
+    max_risk_per_trade_pct: float = Field(gt=0, le=5)
+    max_portfolio_risk_pct: float = Field(gt=0, le=25)
+    unknown_stop_risk_pct: float = Field(gt=0, le=100)
+    max_daily_loss_pct: float = Field(gt=0, le=10)
+    max_drawdown_pct: float = Field(gt=0, le=25)
+    max_new_trades_per_day: int = Field(ge=0, le=10)
+    max_order_value_usd: float = Field(gt=0)
+    max_adv_participation_pct: float = Field(gt=0, le=5)
 
 
 class SignalLimits(Frozen):
-    min_confidence: float
-    min_net_edge_pct: float
-    safety_buffer_pct: float
-    min_reward_risk: float
-    min_stop_atr: float
-    max_stop_atr: float
+    min_confidence: float = Field(ge=0, le=1)
+    min_net_edge_pct: float = Field(ge=0)
+    safety_buffer_pct: float = Field(ge=0)
+    min_reward_risk: float = Field(ge=1)
+    min_stop_atr: float = Field(gt=0)
+    max_stop_atr: float = Field(gt=0)
 
 
 class ExecutionLimits(Frozen):
-    max_spread_pct: float
-    max_quote_age_seconds: float
-    max_bar_age_days: int
-    max_account_age_seconds: float
-    price_collar_pct: float
-    slippage_bps: float
-    fee_per_order_usd: float
+    max_spread_pct: float = Field(gt=0, le=2)
+    max_quote_age_seconds: float = Field(gt=0, le=900)
+    max_bar_age_days: int = Field(ge=1, le=10)
+    max_account_age_seconds: float = Field(gt=0, le=900)
+    price_collar_pct: float = Field(gt=0, le=3)
+    slippage_bps: float = Field(ge=0)
+    fee_per_order_usd: float = Field(ge=0)
     broker_side_stops: bool = True
+    min_price_usd: float = Field(default=5.0, ge=0)                  # no new entries in penny stocks
+    min_avg_dollar_volume_usd: float = Field(default=20_000_000, ge=0)  # 20-day average, for new entries
+    max_exit_attempts_per_day: int = Field(default=3, ge=1, le=10)
 
 
 class EventLimits(Frozen):
@@ -139,10 +154,18 @@ def load_events(path: Path | None = None) -> Events:
     return Events(earnings=data.get("earnings") or {})
 
 
+def _project_path(value: str | os.PathLike) -> Path:
+    """Relative paths are anchored to the project, not the caller's cwd, so every process sees the same state/KILL."""
+    p = Path(value).expanduser()
+    return p if p.is_absolute() else (PROJECT_ROOT / p).resolve()
+
+
 def load_settings() -> Settings:
     from dotenv import load_dotenv
 
     load_dotenv(PROJECT_ROOT / ".env")
+    if token_dir := os.environ.get("WEBULL_TOKEN_DIR"):
+        os.environ["WEBULL_TOKEN_DIR"] = str(_project_path(token_dir))
     env = os.environ.get("WEBULL_ENVIRONMENT", "uat").lower()
     if env not in {"uat", "prod"}:
         raise ValueError("WEBULL_ENVIRONMENT must be 'uat' or 'prod'")
@@ -151,7 +174,7 @@ def load_settings() -> Settings:
         webull_environment=env,
         webull_region=os.environ.get("WEBULL_REGION", "sg").lower(),
         webull_account_id=os.environ.get("WEBULL_ACCOUNT_ID", ""),
-        state_dir=Path(os.environ.get("STATE_DIR", PROJECT_ROOT / "state")),
+        state_dir=_project_path(os.environ.get("STATE_DIR", "state")),
         llm_model=os.environ.get("LLM_MODEL", "claude-opus-5-5"),
         llm_model_fast=os.environ.get("LLM_MODEL_FAST", "claude-haiku-4-5"),
     )

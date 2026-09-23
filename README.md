@@ -33,7 +33,7 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Reconciliation, kill switch (auto + operator), drawdown breaker | `orchestrator.py`, `killswitch.py` |
 | Webull SG adapter (official SDK v3.0.2, UAT + prod) | `broker/webull.py` |
 | Simulated broker for tests and offline runs | `broker/simulated.py` |
-| 51 tests covering the blueprint's failure list | `tests/` |
+| 79 tests covering the blueprint's failure list | `tests/` |
 
 **Not built yet:** backtester (Phase 3), news/filings/earnings ingestion, Postgres/Timescale,
 dashboard, real-time order-event stream (gRPC; polling is used instead), options (Phase 7;
@@ -45,7 +45,7 @@ Webull's own MCP config marks SG as `supports_options=False`).
 cd ~/trading-agent
 uv sync --extra webull
 cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run --group dev pytest    # 51 passing
+uv run --group dev pytest    # 79 passing
 uv run trading-agent research --broker sim   # offline dry run on synthetic data
 ```
 
@@ -77,3 +77,26 @@ uv run trading-agent verify-ledger              # detect tampering with the audi
 Maintain `config/events.yaml` (earnings dates) by hand until an earnings feed is wired in.
 Individual stocks with no date on file are blocked from new entries. ETFs are not affected.
 `market_calendar.py` holds NYSE holidays through 2027 and refuses to run after that until extended.
+
+## Safety guarantees
+
+- **No invented market data.** Without a Webull quote subscription, the yfinance fallback uses only real
+  bid/ask and the exchange timestamp. A one-sided or stale quote blocks new entries instead of being
+  filled in. Bars without a timestamp are dropped.
+- **The kill switch always hits the same file.** Relative `STATE_DIR` / `WEBULL_TOKEN_DIR` resolve against
+  the project root, so `trading-agent kill` works from any directory.
+- **Positions are not left without a stop.** Each monitor pass re-arms a missing or rejected broker-side
+  stop (bounded, and never while an exit sell is working). A rejected exit is retried up to
+  `max_exit_attempts_per_day`; after that the stop is left in place.
+- **Exits need a real price.** No sell is priced off a zero bid or a quote older than 15 minutes.
+- **Your own holdings are off-limits by default.** With `agent_may_close_manual_positions: false` the agent
+  sells only what it bought. Agent exits must cite our own price/position evidence, never news alone.
+- **Liquidity floor for entries:** `min_price_usd` and `min_avg_dollar_volume_usd`.
+- **One cycle at a time.** A lock (`state/agent.lock`) stops a manual run overlapping the scheduled tick, and
+  network calls time out so a hung feed cannot stall monitoring.
+- **A crash in execute or research never skips monitor**, and it sends a Telegram alert.
+- **Alerts are not silently dropped.** Telegram messages fall back to plain text if Markdown is rejected.
+- **Limits are sanity-checked on load.** Values such as >100% exposure, margin/short/options switches or
+  >5% risk per trade refuse to load instead of trading.
+- **Webull order status is matched exactly** by client order id, and 5xx submission errors are treated as
+  ambiguous (reconciled, not assumed rejected).

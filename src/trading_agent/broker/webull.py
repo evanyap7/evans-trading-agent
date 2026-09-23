@@ -137,21 +137,25 @@ class WebullBroker:
     # -- market data ----------------------------------------------------------------
 
     def _yfinance_quotes(self, symbols: list[str]) -> dict[str, Quote]:
+        """Fallback when the Webull quote subscription is missing.
+
+        Uses only real bid/ask and the exchange timestamp. Nothing is estimated: a missing side
+        is left at 0 so the spread reads as infinite and the risk engine refuses new entries.
+        """
         import yfinance as yf
         now, out = utcnow(), {}
         for sym in symbols:
             try:
-                t = yf.Ticker(sym)
-                fi = t.fast_info
-                last = _f(getattr(fi, "last_price", None)) or _f(getattr(fi, "previous_close", None))
-                if last > 0:
-                    bid = _f(getattr(fi, "bid", None)) or round(last * 0.9998, 2)
-                    ask = _f(getattr(fi, "ask", None)) or round(last * 1.0002, 2)
-                    out[sym] = Quote(
-                        symbol=sym, bid=bid, ask=ask, last=last,
-                        bid_size=100, ask_size=100, volume=_f(getattr(fi, "last_volume", 0)),
-                        fetched_at=now,
-                    )
+                info = yf.Ticker(sym).info or {}
+                last = _f(info.get("regularMarketPrice")) or _f(info.get("currentPrice"))
+                if last <= 0:
+                    continue
+                out[sym] = Quote(
+                    symbol=sym, bid=_f(info.get("bid")), ask=_f(info.get("ask")), last=last,
+                    bid_size=_f(info.get("bidSize")), ask_size=_f(info.get("askSize")),
+                    volume=_f(info.get("regularMarketVolume")),
+                    last_trade_time=_ts(info.get("regularMarketTime")), fetched_at=now, source="yfinance",
+                )
             except Exception:
                 continue
         return out
@@ -190,7 +194,7 @@ class WebullBroker:
                     out[s["symbol"]] = Quote(
                         symbol=s["symbol"], bid=_f(s.get("bid")), ask=_f(s.get("ask")), last=_f(s.get("price")),
                         bid_size=_f(s.get("bid_size")), ask_size=_f(s.get("ask_size")), volume=_f(s.get("volume")),
-                        last_trade_time=_ts(s.get("last_trade_time")), fetched_at=now,
+                        last_trade_time=_ts(s.get("last_trade_time")), fetched_at=now, source="webull",
                     )
             if out:
                 return out
@@ -208,9 +212,10 @@ class WebullBroker:
                 resp = self._data.market_data.get_batch_history_bar(symbols[i:i + 20], Category.US_STOCK.name,
                                                                     Timespan.D.name, str(count))
                 for group in _unwrap_list(_json(resp), "data"):
-                    bars = [Bar(ts=_ts(b.get("time")) or utcnow(), open=_f(b["open"]), high=_f(b["high"]),
+                    # A bar with no timestamp is dropped, never stamped "now": that would make stale data look fresh.
+                    bars = [Bar(ts=ts, open=_f(b["open"]), high=_f(b["high"]),
                                 low=_f(b["low"]), close=_f(b["close"]), volume=_f(b.get("volume")))
-                            for b in group.get("result", [])]
+                            for b in group.get("result", []) if (ts := _ts(b.get("time"))) is not None]
                     out[group["symbol"]] = sorted(bars, key=lambda b: b.ts)
             if out:
                 return out
@@ -257,8 +262,12 @@ class WebullBroker:
         try:
             data = _json(self._trade.order_v3.place_order(account_id=self.account_id, new_orders=[self._payload(order)]))
         except ServerException as e:
-            # The broker answered with a business error: the order was not accepted.
-            raise BrokerError(f"rejected: {getattr(e, 'error_code', '')} {e}", ambiguous=False) from e
+            # A 4xx business error means the order was not accepted. A 5xx (or missing status) may
+            # have reached the matching engine, so it is ambiguous and must be reconciled, not assumed dead.
+            status = getattr(e, "http_status", None)
+            ambiguous = not (isinstance(status, int) and 400 <= status < 500)
+            raise BrokerError(f"{'ambiguous' if ambiguous else 'rejected'}: {getattr(e, 'error_code', '')} {e}",
+                              ambiguous=ambiguous) from e
         except BrokerError as e:
             raise BrokerError(str(e), ambiguous=True) from e
         except Exception as e:
@@ -282,7 +291,8 @@ class WebullBroker:
                                    quantity=0, status=BrokerOrderStatus.NOT_FOUND)
             raise
         items = self._flatten_orders([data] if isinstance(data, dict) else _unwrap_list(data, "data"))
-        match = next((o for o in items if o.get("client_order_id") == client_order_id), items[0] if items else None)
+        # Exact match only: returning some other order's status could fake a fill we never got.
+        match = next((o for o in items if o.get("client_order_id") == client_order_id), None)
         if match is None:
             return BrokerOrder(client_order_id=client_order_id, symbol="", side="BUY", order_type="",
                                quantity=0, status=BrokerOrderStatus.NOT_FOUND)

@@ -40,16 +40,17 @@ def send_telegram(text: str) -> bool:
     token, chat_id = get_telegram_config()
     if not token or not chat_id:
         return False
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        resp = requests.post(
-            url,
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=8,
-        )
-        return resp.status_code == 200
-    except Exception:
-        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    # Markdown first; if Telegram rejects the formatting (an unbalanced `_` or `*` in a symbol, reason
+    # or LLM thesis), resend as plain text so a critical alert is never silently lost.
+    for payload in ({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+                    {"chat_id": chat_id, "text": text}):
+        try:
+            if requests.post(url, json=payload, timeout=8).status_code == 200:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def alert_research_summary(date_str: str, n_proposals: int, n_evidence: int, notes: list[str]) -> None:
@@ -94,10 +95,10 @@ def alert_order_submitted(symbol: str, side: str, qty: int, price: float | None,
 def alert_trade_exited(symbol: str, qty: int, price: float, reason: str) -> None:
     emoji = "🎯" if "profit" in reason.lower() else "🛡️"
     msg = (
-        f"{emoji} *Position Exited*\n\n"
+        f"{emoji} *Exit Order*\n\n"
         f"• *Ticker*: `{symbol}`\n"
-        f"• *Shares Sold*: `{qty}`\n"
-        f"• *Execution Price*: `${price:.2f}`\n"
+        f"• *Shares*: `{qty}`\n"
+        f"• *Reference Price*: `${price:.2f}`\n"
         f"• *Exit Reason*: `{reason}`"
     )
     send_telegram(msg)
@@ -105,10 +106,23 @@ def alert_trade_exited(symbol: str, qty: int, price: float, reason: str) -> None
 
 def alert_killswitch(reason: str, engaged: bool = True) -> None:
     if engaged:
-        msg = f"🚨 *EMERGENCY KILL SWITCH ENGAGED*\n\n*Reason*: {reason}\n*Status*: All working orders cancelled. Trading paused."
+        msg = f"🚨 *EMERGENCY KILL SWITCH ENGAGED*\n\n*Reason*: {reason}\n*Status*: No new entries; working entry orders are cancelled. Protective stops and exits stay active."
     else:
         msg = f"✅ *Kill Switch Released*\n\nAutonomous trading resumed."
     send_telegram(msg)
+
+
+def alert_unprotected(symbol: str, qty: int, stop: float, stop_state: str) -> None:
+    send_telegram(
+        f"⚠️ *UNPROTECTED POSITION*\n\n"
+        f"• *Ticker*: `{symbol}` x{qty}\n"
+        f"• Broker-side stop at `${stop:.2f}` is `{stop_state}`\n"
+        f"Only the 5-minute software stop is protecting this position. Check Webull."
+    )
+
+
+def alert_cycle_error(kind: str, error: str) -> None:
+    send_telegram(f"❌ *Trading cycle failed*: `{kind}`\n\n{error[:500]}")
 
 
 def build_daily_briefing_text(account: Any, ledger: Any = None, date_str: str = "") -> str:
@@ -177,7 +191,7 @@ def build_daily_briefing_text(account: Any, ledger: Any = None, date_str: str = 
             recent_orders = list(ledger.iter_rows("SELECT * FROM orders ORDER BY created_at DESC LIMIT 3"))
             for o in recent_orders:
                 activity_found = True
-                lines.append(f"• ⚡ *Order {o['symbol']}*: `{o['purpose']} {o['side']}` {o['quantity']:g} @ `${o.get('limit_price') or 0:.2f}` -> `{o['state']}`")
+                lines.append(f"• ⚡ *Order {o['symbol']}*: `{o['purpose']} {o['side']}` {o['quantity']:g} @ `${o['limit_price'] or 0:.2f}` -> `{o['state']}`")
         except Exception:
             pass
 

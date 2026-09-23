@@ -153,11 +153,21 @@ def test_pre_existing_position_exit_for_capital_rotation(tmp_path):
             exits=[ExitProposal(symbol="GOOG", reason="Rotate capital into higher velocity breakout", evidence_ids=[px_id])]
         )
 
-    orch_res = make_orchestrator(tmp_path, broker, ScriptedAgent(exit_goog), AFTER_CLOSE)
+    from trading_agent.config import load_risk_limits
+
+    base = load_risk_limits()
+    opted_in = base.model_copy(update={"live_trading": base.live_trading.model_copy(
+        update={"agent_may_close_manual_positions": True})})
+
+    # Default: the agent may not sell a holding it did not open.
+    blocked = make_orchestrator(tmp_path / "blocked", broker, ScriptedAgent(exit_goog), AFTER_CLOSE).research()
+    assert any("exit for GOOG ignored: not a system trade" in n for n in blocked.notes), blocked.notes
+
+    orch_res = make_orchestrator(tmp_path, broker, ScriptedAgent(exit_goog), AFTER_CLOSE, limits=opted_in)
     rep_res = orch_res.research()
     assert any("exit queued for GOOG" in n for n in rep_res.notes), rep_res.notes
 
-    orch_exec = make_orchestrator(tmp_path, broker, ScriptedAgent(exit_goog), IN_SESSION)
+    orch_exec = make_orchestrator(tmp_path, broker, ScriptedAgent(exit_goog), IN_SESSION, limits=opted_in)
     rep_exec = orch_exec.execute()
     assert any("GOOG: agent exit SELL 1" in n for n in rep_exec.notes), rep_exec.notes
 

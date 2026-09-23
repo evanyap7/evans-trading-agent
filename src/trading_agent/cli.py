@@ -17,8 +17,12 @@ Add `--broker sim` to any cycle to run against synthetic data with no credential
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
+import socket
 import sys
+from pathlib import Path
 
 from .agents import BaselineMomentumAgent, ClaudeResearchAgent, TieredResearchAgent
 from .config import TradingMode, load_events, load_risk_limits, load_settings, load_universe
@@ -37,6 +41,37 @@ def _sim_broker(universe):
         last = b.bars[sym][-1].close
         b.set_quote(sym, bid=round(last * 0.9998, 2), ask=round(last * 1.0002, 2), last=last)
     return b
+
+
+NETWORK_TIMEOUT_SECONDS = 60  # backstop for any library call that forgets its own timeout
+
+
+@contextlib.contextmanager
+def _single_instance(state_dir: Path):
+    """Exclusive lock so a manual run can never overlap the scheduled tick and double-submit."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with open(state_dir / "agent.lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit("another trading-agent cycle is running; try again shortly")
+        yield
+
+
+def _run_cycle(args) -> None:
+    orch = _build(args)
+    print(f"{orch.now().isoformat(timespec='seconds')} mode={orch.settings.trading_mode.value} "
+          f"env={orch.settings.webull_environment} broker={args.broker} agent={orch.agent.name}")
+    if args.cmd == "morning-report":
+        reports = [orch.morning_briefing()]
+    elif args.cmd == "tick":
+        reports = orch.tick()
+    else:
+        reports = [getattr(orch, args.cmd)()]
+    for rep in reports:
+        print(f" [{rep.kind}]")
+        for n in rep.notes:
+            print(f"  - {n}")
 
 
 def _build(args) -> Orchestrator:
@@ -88,19 +123,9 @@ def main(argv: list[str] | None = None) -> None:
         out = b.list_accounts() if args.cmd == "accounts" else b.probe(args.symbol)
         print(json.dumps(out, indent=2, default=str))
     elif args.cmd in ("research", "execute", "monitor", "tick", "morning-report"):
-        orch = _build(args)
-        print(f"{orch.now().isoformat(timespec='seconds')} mode={orch.settings.trading_mode.value} "
-              f"env={orch.settings.webull_environment} broker={args.broker} agent={orch.agent.name}")
-        if args.cmd == "morning-report":
-            reports = [orch.morning_briefing()]
-        elif args.cmd == "tick":
-            reports = orch.tick()
-        else:
-            reports = [getattr(orch, args.cmd)()]
-        for rep in reports:
-            print(f" [{rep.kind}]")
-            for n in rep.notes:
-                print(f"  - {n}")
+        socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
+        with _single_instance(settings.state_dir / "sim" if args.broker == "sim" else settings.state_dir):
+            _run_cycle(args)
     elif args.cmd == "kill":
         KillSwitch(settings.state_dir).engage(args.reason, by="operator")
         print("kill switch ENGAGED. The next execute/monitor pass cancels working entry orders.")
