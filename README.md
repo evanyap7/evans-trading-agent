@@ -74,8 +74,9 @@ uv run trading-agent unkill
 uv run trading-agent verify-ledger              # detect tampering with the audit log
 ```
 
-Maintain `config/events.yaml` (earnings dates) by hand until an earnings feed is wired in.
-Individual stocks with no date on file are blocked from new entries. ETFs are not affected.
+Earnings dates come from Webull's earnings calendar at every research and execute cycle (if the next
+report is not listed yet, it is estimated as the last one plus a quarter). `config/events.yaml` overrides
+the feed. Individual stocks with no date are blocked from new entries. ETFs are not affected.
 `market_calendar.py` holds NYSE holidays through 2027 and refuses to run after that until extended.
 
 ## Safety guarantees

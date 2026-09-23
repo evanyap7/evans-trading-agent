@@ -47,6 +47,7 @@ class Orchestrator:
         self.limits = limits
         self.universe = universe
         self.events = events
+        self._manual_events = events  # config/events.yaml: always wins over broker data
         self.broker = broker
         self.ledger = ledger
         self.agent = agent
@@ -65,6 +66,23 @@ class Orchestrator:
         acct = self.broker.get_account()
         self.ledger.snapshot_equity(acct.as_of, to_trading_date(acct.as_of), acct.equity)
         return acct
+
+    def _refresh_earnings(self, symbols, rep: CycleReport) -> None:
+        """Merge broker earnings dates for stocks into the risk engine's events. On failure the stocks
+        simply stay unknown, which blocks their entries while require_earnings_data_for_stocks is on."""
+        fetch = getattr(self.broker, "get_earnings_dates", None)
+        stocks = sorted(s for s in symbols if (sec := self.universe.get(s)) and sec.type == "EQUITY")
+        if fetch is None or not stocks:
+            return
+        try:
+            fetched = fetch(stocks, to_trading_date(self.now()))
+        except Exception as e:
+            rep.add(f"earnings calendar unavailable: {e}")
+            return
+        self.events = Events(earnings={**fetched, **self._manual_events.earnings})
+        missing = [s for s in stocks if s not in self.events.earnings]
+        if missing:
+            rep.add(f"no earnings date for {', '.join(missing)} (new entries blocked)")
 
     def reconcile(self, account: AccountState) -> tuple[bool, list[str]]:
         """Sync every live order with the broker, then check positions match what we believe we hold."""
@@ -131,6 +149,7 @@ class Orchestrator:
         bars = self.broker.get_daily_bars(symbols, BAR_HISTORY)
         quotes = self.broker.get_quotes(symbols)
         evidence, features = build_evidence(bars, quotes, self.universe.regime_benchmark)
+        self._refresh_earnings(symbols, rep)
 
         # Ingest real-time news & macro evidence from Bloomberg, WSJ, The Economist, Reuters, NYSE
         if self.enable_news:
@@ -255,6 +274,7 @@ class Orchestrator:
         quotes = self.broker.get_quotes(symbols) if symbols else {}
         bars = self.broker.get_daily_bars(symbols, BAR_HISTORY) if symbols else {}
         evidence, features = build_evidence(bars, quotes, self.universe.regime_benchmark)
+        self._refresh_earnings(symbols, rep)
         today = to_trading_date(now)
 
         for row in pending:

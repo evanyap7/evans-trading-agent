@@ -7,17 +7,18 @@ live_trading:
   permit_shorting: false
   permit_margin: false
   permit_options: false
-  # false: the agent may only sell positions it opened itself; your hand-bought holdings are never touched.
-  agent_may_close_manual_positions: false
+  # true: the agent may also sell holdings you bought by hand (capital rotation). Exits still need
+  # our own price/position evidence, never news alone.
+  agent_may_close_manual_positions: true
 
 account:
-  max_position_pct: 50        # calibrated for ~$1,000 cash portfolio (allows 1-2 shares of large caps)
-  max_sector_pct: 80          # allows high conviction in leading momentum sectors
+  max_position_pct: 35        # of equity per symbol; limits single-name gap risk past the stop
+  max_sector_pct: 60
   max_total_exposure_pct: 100 # gross long exposure / equity (cash-only, long-only, 0% margin)
-  max_risk_per_trade_pct: 3.0 # max % of equity risked to stop loss per trade (~$25-$30)
+  max_risk_per_trade_pct: 1.0 # max % of equity risked to stop loss per trade (the LLM contract also caps at 1)
   max_portfolio_risk_pct: 10.0 # sum of (price - stop) * qty across open positions
   unknown_stop_risk_pct: 5    # assumed loss for positions with no recorded stop
-  max_daily_loss_pct: 1
+  max_daily_loss_pct: 2       # whole-account equity incl. manual holdings; blocks new entries only
   max_drawdown_pct: 5
   max_new_trades_per_day: 5
   max_order_value_usd: 1000   # allows buying whole shares of large-cap leaders
@@ -46,4 +47,6 @@ execution:
 
 events:
   earnings_blackout_days: 2
-  require_earnings_data_for_stocks: false # allows trading liquid equities without manual calendar blocker
+  # Dates come from Webull's earnings calendar each cycle (config/events.yaml overrides).
+  # Fail closed: a stock with no known date gets no new entries.
+  require_earnings_data_for_stocks: true

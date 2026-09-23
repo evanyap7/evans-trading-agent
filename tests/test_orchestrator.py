@@ -156,11 +156,16 @@ def test_pre_existing_position_exit_for_capital_rotation(tmp_path):
     from trading_agent.config import load_risk_limits
 
     base = load_risk_limits()
-    opted_in = base.model_copy(update={"live_trading": base.live_trading.model_copy(
-        update={"agent_may_close_manual_positions": True})})
 
-    # Default: the agent may not sell a holding it did not open.
-    blocked = make_orchestrator(tmp_path / "blocked", broker, ScriptedAgent(exit_goog), AFTER_CLOSE).research()
+    def with_manual_closes(allowed):
+        return base.model_copy(update={"live_trading": base.live_trading.model_copy(
+            update={"agent_may_close_manual_positions": allowed})})
+
+    opted_in = with_manual_closes(True)
+
+    # Switched off: the agent may not sell a holding it did not open.
+    blocked = make_orchestrator(tmp_path / "blocked", broker, ScriptedAgent(exit_goog), AFTER_CLOSE,
+                                limits=with_manual_closes(False)).research()
     assert any("exit for GOOG ignored: not a system trade" in n for n in blocked.notes), blocked.notes
 
     orch_res = make_orchestrator(tmp_path, broker, ScriptedAgent(exit_goog), AFTER_CLOSE, limits=opted_in)

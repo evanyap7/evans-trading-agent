@@ -100,6 +100,48 @@ def test_webull_server_error_ambiguity(http_status, ambiguous):
     assert e.value.ambiguous is ambiguous
 
 
+def _webull_with_calendar(rows_by_symbol):
+    from trading_agent.broker.webull import WebullBroker
+
+    b = WebullBroker.__new__(WebullBroker)
+    b._data = SimpleNamespace(fundamentals=SimpleNamespace(get_earnings_calendar=lambda s: rows_by_symbol[s]))
+    return b
+
+
+def test_earnings_dates_from_webull_calendar():
+    from datetime import date
+
+    today = date(2026, 9, 23)
+    b = _webull_with_calendar({
+        # next report listed
+        "NFLX": [{"expected_publish_date": "2026-07-16", "eps_actual": "0.8"},
+                 {"expected_publish_date": "2026-10-20"}],
+        # next report not listed yet: last published + one quarter
+        "AAPL": [{"expected_publish_date": "2026-07-30", "eps_actual": "2.02"}],
+        # overdue estimate is clamped to today, so entries stay blocked
+        "OLD": [{"expected_publish_date": "2026-04-01", "eps_actual": "1"}],
+        # no data: stays unknown
+        "NONE": [],
+    })
+    got = b.get_earnings_dates(["NFLX", "AAPL", "OLD", "NONE"], today)
+    assert got == {"NFLX": date(2026, 10, 20), "AAPL": date(2026, 10, 29), "OLD": today}
+
+
+def test_broker_earnings_feed_risk_engine_and_yaml_overrides(tmp_path):
+    from datetime import date
+
+    from trading_agent.config import Events
+
+    broker = seeded_broker(IN_SESSION)
+    broker.get_earnings_dates = lambda symbols, today: {"AAPL": date(2026, 10, 29), "MSFT": date(2026, 10, 27)}
+    orch = make_orchestrator(tmp_path, broker, ScriptedAgent(one_idea), AFTER_CLOSE,
+                             events=Events(earnings={"MSFT": date(2026, 10, 1)}))
+    rep = orch.research()
+    assert orch.events.earnings["AAPL"] == date(2026, 10, 29)
+    assert orch.events.earnings["MSFT"] == date(2026, 10, 1)  # manual entry wins
+    assert any("no earnings date for" in n and "NVDA" in n for n in rep.notes), rep.notes
+
+
 # -- verifier --------------------------------------------------------------------------
 
 

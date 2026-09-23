@@ -8,7 +8,7 @@ so the mappings can be checked against a real SG account.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from ..schemas import AccountState, Bar, BrokerOrder, BrokerOrderStatus, Position, Quote, utcnow
@@ -222,6 +222,36 @@ class WebullBroker:
         except Exception:
             pass
         return self._yfinance_bars(symbols, count)
+
+    # -- events ---------------------------------------------------------------------
+
+    QUARTER_DAYS = 91
+
+    def get_earnings_dates(self, symbols: list[str], today: date) -> dict[str, date]:
+        """Next earnings date per stock from Webull's earnings calendar.
+
+        Uses the earliest unpublished report on or after yesterday. If Webull has not listed the next
+        report yet, estimates it as the last published report plus one quarter (never earlier than today,
+        so an overdue report blocks entries). Symbols with no calendar data are omitted: unknown stays unknown."""
+        out: dict[str, date] = {}
+        for sym in symbols:
+            try:
+                rows = _unwrap_list(_json(self._data.fundamentals.get_earnings_calendar(sym)), "data")
+            except Exception:
+                continue
+            upcoming, published = [], []
+            for r in rows:
+                try:
+                    d = date.fromisoformat(str(r.get("expected_publish_date"))[:10])
+                except ValueError:
+                    continue
+                (published if r.get("eps_actual") not in (None, "") else upcoming).append(d)
+            upcoming = [d for d in upcoming if d >= today - timedelta(days=1)]
+            if upcoming:
+                out[sym] = min(upcoming)
+            elif published:
+                out[sym] = max(max(published) + timedelta(days=self.QUARTER_DAYS), today)
+        return out
 
     # -- orders ---------------------------------------------------------------------
 
