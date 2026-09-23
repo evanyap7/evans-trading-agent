@@ -185,20 +185,36 @@ def test_morning_briefing_cycle(mock_send, tmp_path):
     assert mock_send.called
 
 
-def test_daily_profit_target_exit(tmp_path):
+def test_small_gain_no_longer_forces_an_exit(tmp_path):
+    """The old +$10 'daily target' sale capped winners far below 1R; open trades now run to stop/target/time."""
     broker, orch, rep = _run_research_then_execute(tmp_path)
-    trades = orch.ledger.open_trades()
-    assert len(trades) == 1
-    t = trades[0]
-
-    # Quote moves up by $1.25 on 9 shares = $11.25 gain (>= $10 target), while staying below take_profit (~$2.00 away)
-    entry = t["entry_price"]
-    broker.set_quote(t["symbol"], bid=entry + 1.25, ask=entry + 1.27, last=entry + 1.25, fetched_at=IN_SESSION)
-
+    t = orch.ledger.open_trades()[0]
+    entry, r = t["entry_price"], t["entry_price"] - t["stop_loss"]
+    last = round(entry + 0.5 * r, 2)
+    broker.set_quote(t["symbol"], bid=last, ask=last + 0.02, last=last, fetched_at=IN_SESSION)
     rep = orch.monitor()
-    assert any("daily_target_hit" in n for n in rep.notes), rep.notes
-    assert t["symbol"] not in broker.positions
-    assert orch.ledger.open_trades() == []
+    assert not any("SELL" in n for n in rep.notes), rep.notes
+    assert t["symbol"] in broker.positions and len(orch.ledger.open_trades()) == 1
+
+
+def test_stop_trails_to_breakeven_at_one_r(tmp_path):
+    broker, orch, rep = _run_research_then_execute(tmp_path)
+    t = orch.ledger.open_trades()[0]
+    entry, r = t["entry_price"], t["entry_price"] - t["stop_loss"]
+    last = round(entry + 1.2 * r, 2)  # take-profit sits at +2R
+    broker.set_quote(t["symbol"], bid=last, ask=last + 0.02, last=last, fetched_at=IN_SESSION)
+    rep = orch.monitor()
+    assert any("trail stop" in n for n in rep.notes), rep.notes
+
+    trade = orch.ledger.open_trades()[0]
+    assert trade["stop_loss"] == entry and trade["initial_stop"] == t["stop_loss"]
+    working = [o for o in broker.orders.values() if o.order_type == "STOP_LOSS" and o.status.value == "WORKING"]
+    assert len(working) == 1 and working[0].stop_price == entry  # old stop cancelled, one replacement working
+
+    rep = orch.monitor()  # same price: nothing more to do
+    assert not any("trail stop" in n for n in rep.notes), rep.notes
+    assert len([o for o in broker.orders.values() if o.order_type == "STOP_LOSS"]) == 2
+
 
 
 def test_continuous_intraday_trading_tick(tmp_path):

@@ -157,7 +157,7 @@ class ExecutionEngine:
 
     # -- protective stops -----------------------------------------------------------
 
-    MAX_STOP_ORDERS_PER_TRADE = 10
+    MAX_STOP_ORDERS_PER_TRADE = 20  # re-arms plus trailing-stop replacements
 
     def stop_orders(self, decision_id: str) -> list:
         return list(self.ledger.iter_rows(
@@ -194,15 +194,45 @@ class ExecutionEngine:
             state = OrderState(row["state"])
             if state not in (OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED):
                 return state  # working, pending, unknown (being reconciled), filled or shadow
-        terminal = [st.value for st in TERMINAL_STATES]
-        live_exit = self.ledger.db.execute(
-            f"SELECT 1 FROM orders WHERE decision_id=? AND purpose='EXIT' AND state NOT IN ({','.join('?' * len(terminal))}) LIMIT 1",
-            (decision_id, *terminal)).fetchone()
-        if live_exit is not None:
+        if self._live_exit(decision_id):
             return None  # a sell is already working for these shares; a second one could oversell
         if len(self.stop_orders(decision_id)) >= self.MAX_STOP_ORDERS_PER_TRADE:
             return None
         return self.place_protective_stop(decision_id, symbol, qty, stop)
+
+    def raise_protective_stop(self, decision_id: str, symbol: str, qty: int, new_stop: float) -> str:
+        """Ratchet a trade's stop up: record it, then replace the broker-side stop.
+
+        The old stop is cancelled first and the new one placed only once the cancel is confirmed,
+        so there are never two sells working for the same shares. If placing the new stop fails,
+        the next monitor pass re-arms it at the raised level via `ensure_protective_stop`."""
+        if not (self.send_orders and self.limits.execution.broker_side_stops):
+            self.ledger.raise_stop(decision_id, new_stop)  # software stop only (shadow, or no broker stops)
+            return "raised"
+        if self._live_exit(decision_id):
+            return "skipped: exit working"
+        if len(self.stop_orders(decision_id)) >= self.MAX_STOP_ORDERS_PER_TRADE:
+            return "skipped: stop order budget used"
+        row = self.active_stop(decision_id)
+        if row is not None and OrderState(row["state"]) not in TERMINAL_STATES:
+            self.cancel(row["client_order_id"])
+            state = OrderState(self.ledger.get_order(row["client_order_id"])["state"])
+            if state == OrderState.FILLED:
+                return "skipped: old stop filled"
+            if state not in TERMINAL_STATES:
+                self.ledger.append("stop_raise_deferred", {"reason": "stop cancel not confirmed", "to": new_stop},
+                                   decision_id=decision_id)
+                return "deferred: cancel not confirmed"
+        elif row is not None and OrderState(row["state"]) == OrderState.FILLED:
+            return "skipped: old stop filled"
+        self.ledger.raise_stop(decision_id, new_stop)
+        return f"raised ({self.place_protective_stop(decision_id, symbol, qty, new_stop).value})"
+
+    def _live_exit(self, decision_id: str) -> bool:
+        terminal = [st.value for st in TERMINAL_STATES]
+        return self.ledger.db.execute(
+            f"SELECT 1 FROM orders WHERE decision_id=? AND purpose='EXIT' AND state NOT IN ({','.join('?' * len(terminal))}) LIMIT 1",
+            (decision_id, *terminal)).fetchone() is not None
 
     # -- exits ----------------------------------------------------------------------
 
