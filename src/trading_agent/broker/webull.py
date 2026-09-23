@@ -327,11 +327,13 @@ class WebullBroker:
         except Exception as e:
             # Timeouts, connection resets, unknown SDK errors: the order may exist. Caller must reconcile.
             raise BrokerError(f"ambiguous submission failure: {e}", ambiguous=True) from e
+        self._cached_account = None
         if isinstance(data, dict):
             return data.get("order_id") or next((x.get("order_id") for x in data.get("orders", []) if x), None)
         return None
 
     def cancel(self, client_order_id: str) -> None:
+        self._cached_account = None
         _json(self._call_with_retry(lambda: self._trade.order_v3.cancel_order(self.account_id, client_order_id)))
 
     def get_order(self, client_order_id: str) -> BrokerOrder:

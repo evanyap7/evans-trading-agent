@@ -28,7 +28,20 @@ def size_order(decision_id: str, p: TradeProposal, account: AccountState, avg_vo
     binding = min(caps, key=caps.get)
     qty = math.floor(caps[binding])
     if qty < 1:
-        return f"size rounds to 0 shares (binding cap: {binding})"
+        # Whole-share floor: on small accounts, if 1 share's risk is within the hard
+        # max_risk_per_trade_pct and all hard limits allow 1 share, grant 1 share.
+        hard_risk_cap = (account.equity * a.max_risk_per_trade_pct / 100) / per_share_risk
+        if (
+            hard_risk_cap >= 1.0
+            and caps["cash"] >= 1.0
+            and caps["max position"] >= 1.0
+            and caps["max order value"] >= 1.0
+            and caps["ADV participation"] >= 1.0
+        ):
+            qty = 1
+            binding = "whole-share floor (within max_risk_per_trade_pct)"
+        else:
+            return f"size rounds to 0 shares (binding cap: {binding})"
     return SizedOrder(
         decision_id=decision_id, symbol=p.symbol, side="BUY", quantity=qty, limit_price=limit, stop_loss=stop,
         take_profit=p.exit.take_profit, notional=round(qty * limit, 2), risk_usd=round(qty * per_share_risk, 2),
