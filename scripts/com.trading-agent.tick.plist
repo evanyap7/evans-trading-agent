@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS launchd job: runs `trading-agent tick` every 5 minutes.
+     Install:  cp scripts/com.trading-agent.tick.plist ~/Library/LaunchAgents/
+               launchctl load ~/Library/LaunchAgents/com.trading-agent.tick.plist
+     Edit the two paths below first. A laptop that sleeps will miss ticks:
+     move to an always-on VM before live trading. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.trading-agent.tick</string>
+  <key>WorkingDirectory</key><string>/Users/YOU/trading-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string><string>run</string><string>trading-agent</string>
+    <string>tick</string><string>--agent</string><string>llm</string>
+  </array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>StandardOutPath</key><string>/Users/YOU/trading-agent/state/tick.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/trading-agent/state/tick.err</string>
+</dict>
+</plist>
