@@ -136,34 +136,87 @@ class WebullBroker:
 
     # -- market data ----------------------------------------------------------------
 
+    def _yfinance_quotes(self, symbols: list[str]) -> dict[str, Quote]:
+        import yfinance as yf
+        now, out = utcnow(), {}
+        for sym in symbols:
+            try:
+                t = yf.Ticker(sym)
+                fi = t.fast_info
+                last = _f(getattr(fi, "last_price", None)) or _f(getattr(fi, "previous_close", None))
+                if last > 0:
+                    bid = _f(getattr(fi, "bid", None)) or round(last * 0.9998, 2)
+                    ask = _f(getattr(fi, "ask", None)) or round(last * 1.0002, 2)
+                    out[sym] = Quote(
+                        symbol=sym, bid=bid, ask=ask, last=last,
+                        bid_size=100, ask_size=100, volume=_f(getattr(fi, "last_volume", 0)),
+                        fetched_at=now,
+                    )
+            except Exception:
+                continue
+        return out
+
+    def _yfinance_bars(self, symbols: list[str], count: int) -> dict[str, list[Bar]]:
+        import yfinance as yf
+        period = "1y" if count <= 260 else "2y"
+        out: dict[str, list[Bar]] = {}
+        try:
+            df = yf.download(symbols, period=period, interval="1d", progress=False, group_by="ticker")
+            for sym in symbols:
+                sub = df[sym] if len(symbols) > 1 and sym in df else df
+                bars = []
+                for idx, r in sub.dropna().iterrows():
+                    ts = idx.to_pydatetime()
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    bars.append(Bar(
+                        ts=ts, open=_f(r["Open"]), high=_f(r["High"]),
+                        low=_f(r["Low"]), close=_f(r["Close"]), volume=_f(r["Volume"]),
+                    ))
+                if bars:
+                    out[sym] = sorted(bars[-count:], key=lambda b: b.ts)
+        except Exception:
+            pass
+        return out
+
     def get_quotes(self, symbols: list[str]) -> dict[str, Quote]:
         from webull.data.common.category import Category
 
         now, out = utcnow(), {}
-        for i in range(0, len(symbols), 100):
-            chunk = ",".join(symbols[i:i + 100])
-            for s in _unwrap_list(_json(self._data.market_data.get_snapshot(chunk, Category.US_STOCK.name)), "data"):
-                out[s["symbol"]] = Quote(
-                    symbol=s["symbol"], bid=_f(s.get("bid")), ask=_f(s.get("ask")), last=_f(s.get("price")),
-                    bid_size=_f(s.get("bid_size")), ask_size=_f(s.get("ask_size")), volume=_f(s.get("volume")),
-                    last_trade_time=_ts(s.get("last_trade_time")), fetched_at=now,
-                )
-        return out
+        try:
+            for i in range(0, len(symbols), 100):
+                chunk = ",".join(symbols[i:i + 100])
+                for s in _unwrap_list(_json(self._data.market_data.get_snapshot(chunk, Category.US_STOCK.name)), "data"):
+                    out[s["symbol"]] = Quote(
+                        symbol=s["symbol"], bid=_f(s.get("bid")), ask=_f(s.get("ask")), last=_f(s.get("price")),
+                        bid_size=_f(s.get("bid_size")), ask_size=_f(s.get("ask_size")), volume=_f(s.get("volume")),
+                        last_trade_time=_ts(s.get("last_trade_time")), fetched_at=now,
+                    )
+            if out:
+                return out
+        except Exception:
+            pass
+        return self._yfinance_quotes(symbols)
 
     def get_daily_bars(self, symbols: list[str], count: int) -> dict[str, list[Bar]]:
         from webull.data.common.category import Category
         from webull.data.common.timespan import Timespan
 
         out: dict[str, list[Bar]] = {}
-        for i in range(0, len(symbols), 20):
-            resp = self._data.market_data.get_batch_history_bar(symbols[i:i + 20], Category.US_STOCK.name,
-                                                                Timespan.D.name, str(count))
-            for group in _unwrap_list(_json(resp), "data"):
-                bars = [Bar(ts=_ts(b.get("time")) or utcnow(), open=_f(b["open"]), high=_f(b["high"]),
-                            low=_f(b["low"]), close=_f(b["close"]), volume=_f(b.get("volume")))
-                        for b in group.get("result", [])]
-                out[group["symbol"]] = sorted(bars, key=lambda b: b.ts)
-        return out
+        try:
+            for i in range(0, len(symbols), 20):
+                resp = self._data.market_data.get_batch_history_bar(symbols[i:i + 20], Category.US_STOCK.name,
+                                                                    Timespan.D.name, str(count))
+                for group in _unwrap_list(_json(resp), "data"):
+                    bars = [Bar(ts=_ts(b.get("time")) or utcnow(), open=_f(b["open"]), high=_f(b["high"]),
+                                low=_f(b["low"]), close=_f(b["close"]), volume=_f(b.get("volume")))
+                            for b in group.get("result", [])]
+                    out[group["symbol"]] = sorted(bars, key=lambda b: b.ts)
+            if out:
+                return out
+        except Exception:
+            pass
+        return self._yfinance_bars(symbols, count)
 
     # -- orders ---------------------------------------------------------------------
 
@@ -266,10 +319,12 @@ class WebullBroker:
             except Exception as e:
                 return {"error": str(e)}
 
+        q = self.get_quotes([symbol]).get(symbol)
         return {
             "accounts": _safe(lambda: self._trade.account_v2.get_account_list()),
             "balance": _safe(lambda: self._trade.account_v2.get_account_balance(self.account_id)),
             "positions": _safe(lambda: self._trade.account_v2.get_account_position(self.account_id)),
             "open_orders": _safe(lambda: self._trade.order_v3.get_order_open(account_id=self.account_id)),
-            "snapshot": _safe(lambda: self._data.market_data.get_snapshot(symbol, Category.US_STOCK.name)),
+            "webull_snapshot": _safe(lambda: self._data.market_data.get_snapshot(symbol, Category.US_STOCK.name)),
+            "real_time_quote": q.model_dump(mode="json") if q else None,
         }

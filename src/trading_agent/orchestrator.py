@@ -42,7 +42,7 @@ class CycleReport:
 
 class Orchestrator:
     def __init__(self, *, settings: Settings, limits: RiskLimits, universe: Universe, events: Events, broker: Broker,
-                 ledger: Ledger, agent: ResearchAgent, now: Callable[[], datetime] = utcnow):
+                 ledger: Ledger, agent: ResearchAgent, now: Callable[[], datetime] = utcnow, enable_news: bool = True):
         self.settings = settings
         self.limits = limits
         self.universe = universe
@@ -51,6 +51,7 @@ class Orchestrator:
         self.ledger = ledger
         self.agent = agent
         self.now = now
+        self.enable_news = enable_news
         self.kill = KillSwitch(settings.state_dir)
         self.exec = ExecutionEngine(broker, ledger, limits, send_orders=settings.trading_mode == TradingMode.BROKER)
 
@@ -129,6 +130,15 @@ class Orchestrator:
         bars = self.broker.get_daily_bars(symbols, BAR_HISTORY)
         quotes = self.broker.get_quotes(symbols)
         evidence, features = build_evidence(bars, quotes, self.universe.regime_benchmark)
+
+        # Ingest real-time news & macro evidence from Bloomberg, WSJ, The Economist, Reuters, NYSE
+        if self.enable_news:
+            try:
+                from .news import fetch_all_market_news
+                news_docs = fetch_all_market_news(symbols)
+                evidence.extend(news_docs)
+            except Exception as e:
+                rep.add(f"news ingestion note: {e}")
         trades = {t["symbol"]: t for t in self.ledger.open_trades()}
         for p in account.positions:
             t = trades.get(p.symbol)
