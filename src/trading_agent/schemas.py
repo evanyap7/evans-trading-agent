@@ -164,7 +164,7 @@ class TradeProposal(Strict):
     invalidation_price: float = Field(gt=0)
     entry: EntryOrder
     exit: ExitPlan
-    requested_risk_pct: float = Field(gt=0, le=1)
+    requested_risk_pct: float = Field(gt=0, le=2.5)
     evidence_ids: list[str] = Field(min_length=1)
 
     @model_validator(mode="after")

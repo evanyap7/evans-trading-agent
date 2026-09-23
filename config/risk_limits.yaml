@@ -15,7 +15,7 @@ account:
   max_position_pct: 35        # of equity per symbol; limits single-name gap risk past the stop
   max_sector_pct: 60
   max_total_exposure_pct: 100 # gross long exposure / equity (cash-only, long-only, 0% margin)
-  max_risk_per_trade_pct: 1.0 # max % of equity risked to stop loss per trade (the LLM contract also caps at 1)
+  max_risk_per_trade_pct: 2.0 # calibrated for whole-share execution on accounts under $1,500
   max_portfolio_risk_pct: 10.0 # sum of (price - stop) * qty across open positions
   unknown_stop_risk_pct: 5    # assumed loss for positions with no recorded stop
   max_daily_loss_pct: 2       # whole-account equity incl. manual holdings; blocks new entries only
