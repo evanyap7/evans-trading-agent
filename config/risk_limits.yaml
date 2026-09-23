@@ -23,6 +23,7 @@ account:
   max_new_trades_per_day: 5
   max_order_value_usd: 1000   # allows buying whole shares of large-cap leaders
   max_adv_participation_pct: 2
+  daily_profit_target_usd: 10.0 # target minimally +$10 USD / day net profit
 
 signal:
   min_confidence: 0.50

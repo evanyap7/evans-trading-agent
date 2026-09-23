@@ -55,6 +55,7 @@ class AccountLimits(Frozen):
     max_new_trades_per_day: int = Field(ge=0, le=10)
     max_order_value_usd: float = Field(gt=0)
     max_adv_participation_pct: float = Field(gt=0, le=5)
+    daily_profit_target_usd: float = Field(default=10.0, ge=0)
 
 
 class SignalLimits(Frozen):
@@ -127,6 +128,7 @@ class Settings(Frozen):
     state_dir: Path
     llm_model: str = "claude-opus-5-5"
     llm_model_fast: str = "claude-haiku-4-5"
+    continuous_trading: bool = False
 
     @property
     def is_production(self) -> bool:
@@ -177,4 +179,5 @@ def load_settings() -> Settings:
         state_dir=_project_path(os.environ.get("STATE_DIR", "state")),
         llm_model=os.environ.get("LLM_MODEL", "claude-opus-5-5"),
         llm_model_fast=os.environ.get("LLM_MODEL_FAST", "claude-haiku-4-5"),
+        continuous_trading=os.environ.get("CONTINUOUS_TRADING", "true").lower() in ("1", "true", "yes"),
     )
