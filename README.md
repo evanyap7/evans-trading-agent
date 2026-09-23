@@ -1,5 +1,7 @@
 # Evan's Trading Agent
 
+**Author**: Evan Yap ([@evanyap7](https://github.com/evanyap7))
+
 An autonomous swing-trading agent for a **Webull Singapore** account, built from
 `trading-agent.md`. The LLM invents trades. Deterministic code verifies
 them, sizes them, and approves or rejects them. The official Webull SDK
@@ -21,7 +23,7 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Blueprint component | Where |
 |---|---|
 | Structured LLM trade contract (`OPEN` / `CLOSE` / NO_TRADE) | `schemas.py` |
-| Tiered LLM Intelligence (Claude Haiku 4.5 screener + Claude Opus 5.5 strategist) | `agents.py` |
+| Tiered LLM Intelligence (Fast quantitative screener + Deep reasoning strategist) | `agents.py` |
 | Real-time multi-source financial news & macro evidence (Bloomberg, WSJ, Economist, Reuters, NYSE) | `news.py` |
 | Telegram personal assistant bot alerts & 9:00 AM daily executive morning briefing | `alerts.py` |
 | Rule-based momentum baseline, the benchmark the LLM has to beat | `agents.py` |
@@ -31,7 +33,7 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |
 | Capital rotation & pre-existing portfolio position exit engine | `orchestrator.py`, `execution.py` |
 | Idempotent execution: deterministic client order IDs, preview check, no blind retries | `execution.py` |
-| Broker-side GTC stop-loss placed after each fill | `execution.py` |
+| Broker-side GTC stop-loss placed after each fill (re-armed if missing) | `execution.py` |
 | Append-only, hash-chained ledger (SQLite) | `ledger.py` |
 | Reconciliation, kill switch (auto + operator), drawdown breaker | `orchestrator.py`, `killswitch.py` |
 | Webull SG adapter (official SDK v3.0.2 + resilient yfinance fallback, UAT + prod) | `broker/webull.py` |
@@ -48,7 +50,7 @@ Webull's own MCP config marks SG as `supports_options=False`).
 cd ~/trading-agent
 uv sync --extra webull
 cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run --group dev pytest    # 83 passing
+uv run pytest                # 83 passing
 uv run trading-agent research --broker sim   # offline dry run on synthetic data
 ```
 
@@ -62,16 +64,24 @@ uv run trading-agent research --broker sim   # offline dry run on synthetic data
    and compare LLM ideas against the baseline.
 3. **UAT orders:** `TRADING_MODE=broker`, `WEBULL_ENVIRONMENT=uat`. Exercise preview, fills, stops,
    cancels and the kill switch against Webull's test environment.
-4. **Live canary:** `WEBULL_ENVIRONMENT=prod`, `TRADING_MODE=broker`, **and** set
-   `live_trading.enabled: true` in `config/risk_limits.yaml` in a git commit. Keep the default caps
-   ($500 per order, 20% total exposure, 1% daily loss, 5% drawdown).
+4. **Live execution:** `WEBULL_ENVIRONMENT=prod`, `TRADING_MODE=broker`, **and** set
+   `live_trading.enabled: true` in `config/risk_limits.yaml`.
 
 Real orders need all three switches. With any one of them off, entries are risk-rejected.
+
+## Telegram Personal Assistant Integration
+
+The agent dispatches real-time events to your Telegram bot:
+- **Nightly Research Summaries**: Dispatched after market close with ingested macro evidence and queued setups.
+- **Order Executions & Fills**: Real-time notifications for live submissions and broker-side GTC stops.
+- **Automated Exits & Capital Rotation**: Instant alert when take-profit, stop-loss, or rotation exits execute.
+- **Daily 9:00 AM Morning Briefing**: Complete portfolio snapshot, 24h P&L, open positions with unrealized gains, and analyst stance delivered at 09:00 SGT (`trading-agent morning-report`).
 
 ## Operating
 
 ```bash
 uv run trading-agent status                     # kill switch, trades, orders, recent events
+uv run trading-agent morning-report --broker webull # send fresh 9:00 AM briefing to Telegram
 uv run trading-agent kill --reason "..."        # stop new orders; cancel working entries
 uv run trading-agent unkill
 uv run trading-agent verify-ledger              # detect tampering with the audit log
