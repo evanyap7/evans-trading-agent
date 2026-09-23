@@ -1,0 +1,29 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime and local state
+state/
+conf/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pid
+
+# Python & testing caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Local tooling & OS files
+.claude/
+.DS_Store

@@ -1,0 +1,27 @@
+# Tradable allowlist. Anything not listed is rejected by the risk engine.
+# Start small and liquid; expand only with evidence.
+symbols:
+  SPY:   {type: ETF, sector: Broad Market}
+  QQQ:   {type: ETF, sector: Broad Market}
+  IWM:   {type: ETF, sector: Broad Market}
+  DIA:   {type: ETF, sector: Broad Market}
+  XLK:   {type: ETF, sector: Technology}
+  XLF:   {type: ETF, sector: Financials}
+  XLE:   {type: ETF, sector: Energy}
+  XLV:   {type: ETF, sector: Health Care}
+  XLI:   {type: ETF, sector: Industrials}
+  XLY:   {type: ETF, sector: Consumer Discretionary}
+  XLP:   {type: ETF, sector: Consumer Staples}
+  XLU:   {type: ETF, sector: Utilities}
+  TLT:   {type: ETF, sector: Rates}
+  GLD:   {type: ETF, sector: Commodities}
+  AAPL:  {type: EQUITY, sector: Technology}
+  MSFT:  {type: EQUITY, sector: Technology}
+  NVDA:  {type: EQUITY, sector: Technology}
+  AMZN:  {type: EQUITY, sector: Consumer Discretionary}
+  GOOGL: {type: EQUITY, sector: Communication Services}
+  META:  {type: EQUITY, sector: Communication Services}
+  JPM:   {type: EQUITY, sector: Financials}
+  XOM:   {type: EQUITY, sector: Energy}
+
+regime_benchmark: SPY

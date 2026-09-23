@@ -1,0 +1,44 @@
+# Deterministic risk envelope. Changed only by a human, through a git commit.
+# The LLM cannot write this file; its hash is recorded with every risk decision.
+
+live_trading:
+  enabled: false              # real orders need: this true + WEBULL_ENVIRONMENT=prod + TRADING_MODE=broker
+  allowed_instruments: [EQUITY, ETF]
+  permit_shorting: false
+  permit_margin: false
+  permit_options: false
+
+account:
+  max_position_pct: 2         # of equity, per symbol
+  max_sector_pct: 10
+  max_total_exposure_pct: 20  # gross long exposure / equity
+  max_risk_per_trade_pct: 0.25
+  max_portfolio_risk_pct: 1.5 # sum of (price - stop) * qty across open positions
+  unknown_stop_risk_pct: 10   # assumed loss for positions with no recorded stop (e.g. opened by hand)
+  max_daily_loss_pct: 1
+  max_drawdown_pct: 5
+  max_new_trades_per_day: 3
+  max_order_value_usd: 500
+  max_adv_participation_pct: 1  # order shares as % of 20-day average volume
+
+signal:
+  min_confidence: 0.55
+  min_net_edge_pct: 0.5       # expected return after costs and safety buffer
+  safety_buffer_pct: 0.25
+  min_reward_risk: 1.5
+  min_stop_atr: 0.5           # stop must sit at least this many ATRs below entry
+  max_stop_atr: 4.0
+
+execution:
+  max_spread_pct: 0.25
+  max_quote_age_seconds: 30   # during market hours
+  max_bar_age_days: 5         # latest daily bar must be this recent (calendar days)
+  max_account_age_seconds: 120
+  price_collar_pct: 0.5       # BUY limit may not exceed the ask by more than this
+  slippage_bps: 5             # per side, used in cost estimates
+  fee_per_order_usd: 0        # set to your Webull SG commission + platform fee
+  broker_side_stops: true     # place a GTC STOP_LOSS at the broker once an entry fills
+
+events:
+  earnings_blackout_days: 2
+  require_earnings_data_for_stocks: true  # fail closed: no earnings date on file => no new stock entries

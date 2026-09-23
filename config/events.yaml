@@ -1,0 +1,5 @@
+# Known upcoming earnings dates. Until an automated earnings feed is wired in, maintain by hand.
+# Stocks (not ETFs) with no entry here are blocked from new entries while
+# require_earnings_data_for_stocks is true.
+# Format:  SYMBOL: YYYY-MM-DD
+earnings: {}
