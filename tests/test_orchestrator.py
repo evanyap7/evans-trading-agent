@@ -137,7 +137,6 @@ def test_tick_runs_each_cycle_once_per_day(tmp_path):
 
 
 def test_pre_existing_position_exit_for_capital_rotation(tmp_path):
-    from unittest.mock import patch
     from trading_agent.schemas import ExitProposal, Position
 
     broker = seeded_broker(IN_SESSION)
