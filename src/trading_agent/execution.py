@@ -145,15 +145,66 @@ class ExecutionEngine:
                                    add_trading_days(today, prop.exit.time_stop_days))
             if self.limits.execution.broker_side_stops:
                 self.ensure_protective_stop(decision_id, row["symbol"], int(qty), prop.exit.stop_loss)
-        elif row["purpose"] in ("STOP", "EXIT"):
+            try:
+                from .alerts import alert_stock_bought
+                alert_stock_bought(
+                    symbol=row["symbol"],
+                    qty=qty,
+                    fill_price=px,
+                    stop_loss=prop.exit.stop_loss,
+                    take_profit=prop.exit.take_profit,
+                    thesis=getattr(prop, "thesis", "") or "",
+                )
+            except Exception:
+                pass
+        elif row["purpose"].startswith("STOP") or row["purpose"] == "EXIT" or row["side"] == "SELL":
             trade = next((t for t in self.ledger.open_trades() if t["decision_id"] == decision_id), None)
             if trade is None:
-                return
-            if qty + 1e-9 < trade["quantity"]:
-                # Partial exit: keep managing (and protecting) the shares still held.
-                self.ledger.reduce_trade(decision_id, trade["quantity"] - qty)
-            else:
-                self.ledger.close_trade(decision_id, "stop_filled" if row["purpose"] == "STOP" else "exit_filled")
+                trade = self.ledger.db.execute("SELECT * FROM trades WHERE decision_id=?", (decision_id,)).fetchone()
+
+            entry_px = trade["entry_price"] if trade and "entry_price" in trade.keys() else None
+            pnl = None
+            pnl_pct = None
+            if entry_px is not None and entry_px > 0:
+                pnl = (px - entry_px) * qty
+                pnl_pct = ((px - entry_px) / entry_px) * 100
+
+            exit_reason = "stop_loss" if row["purpose"].startswith("STOP") else "target_or_thesis_exit"
+            if row["purpose"] == "EXIT":
+                try:
+                    last_exit_req = self.ledger.db.execute(
+                        "SELECT payload FROM events WHERE kind='exit_requested' AND decision_id=? ORDER BY seq DESC LIMIT 1",
+                        (decision_id,)
+                    ).fetchone()
+                    if last_exit_req:
+                        import json
+                        payload = json.loads(last_exit_req["payload"])
+                        if "reason" in payload:
+                            exit_reason = payload["reason"]
+                except Exception:
+                    pass
+
+            status = trade["status"] if trade and "status" in trade.keys() else ""
+            if trade is not None and status != "CLOSED":
+                if qty + 1e-9 < trade["quantity"]:
+                    # Partial exit: keep managing (and protecting) the shares still held.
+                    self.ledger.reduce_trade(decision_id, trade["quantity"] - qty)
+                else:
+                    self.ledger.close_trade(decision_id, "stop_filled" if row["purpose"].startswith("STOP") else "exit_filled")
+
+            try:
+                from .alerts import alert_stock_sold
+                alert_stock_sold(
+                    symbol=row["symbol"],
+                    qty=qty,
+                    fill_price=px,
+                    entry_price=entry_px,
+                    reason=exit_reason,
+                    pnl=pnl,
+                    pnl_pct=pnl_pct,
+                )
+            except Exception:
+                pass
 
     # -- protective stops -----------------------------------------------------------
 
@@ -200,14 +251,24 @@ class ExecutionEngine:
             return None
         return self.place_protective_stop(decision_id, symbol, qty, stop)
 
-    def raise_protective_stop(self, decision_id: str, symbol: str, qty: int, new_stop: float) -> str:
+    def raise_protective_stop(self, decision_id: str, symbol: str, qty: int, new_stop: float, current_price: float | None = None) -> str:
         """Ratchet a trade's stop up: record it, then replace the broker-side stop.
 
         The old stop is cancelled first and the new one placed only once the cancel is confirmed,
         so there are never two sells working for the same shares. If placing the new stop fails,
         the next monitor pass re-arms it at the raised level via `ensure_protective_stop`."""
+        old_stop = None
+        trade = next((t for t in self.ledger.open_trades() if t["decision_id"] == decision_id), None)
+        if trade and "stop_loss" in trade.keys():
+            old_stop = trade["stop_loss"]
+
         if not (self.send_orders and self.limits.execution.broker_side_stops):
             self.ledger.raise_stop(decision_id, new_stop)  # software stop only (shadow, or no broker stops)
+            try:
+                from .alerts import alert_stop_raised
+                alert_stop_raised(symbol, old_stop, new_stop, current_price=current_price)
+            except Exception:
+                pass
             return "raised"
         if self._live_exit(decision_id):
             return "skipped: exit working"
@@ -226,7 +287,13 @@ class ExecutionEngine:
         elif row is not None and OrderState(row["state"]) == OrderState.FILLED:
             return "skipped: old stop filled"
         self.ledger.raise_stop(decision_id, new_stop)
-        return f"raised ({self.place_protective_stop(decision_id, symbol, qty, new_stop).value})"
+        res_state = self.place_protective_stop(decision_id, symbol, qty, new_stop)
+        try:
+            from .alerts import alert_stop_raised
+            alert_stop_raised(symbol, old_stop, new_stop, current_price=current_price)
+        except Exception:
+            pass
+        return f"raised ({res_state.value})"
 
     def _live_exit(self, decision_id: str) -> bool:
         terminal = [st.value for st in TERMINAL_STATES]

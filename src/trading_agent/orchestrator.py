@@ -519,7 +519,7 @@ class Orchestrator:
                 initial = t["initial_stop"] if t["initial_stop"] is not None else t["stop_loss"]
                 new_stop = trailed_stop(t["entry_price"], initial, t["stop_loss"], q.last, self.limits.execution)
                 if new_stop is not None:
-                    outcome = self.exec.raise_protective_stop(t["decision_id"], t["symbol"], qty, new_stop)
+                    outcome = self.exec.raise_protective_stop(t["decision_id"], t["symbol"], qty, new_stop, current_price=q.last)
                     rep.add(f"{t['symbol']}: trail stop {t['stop_loss']} -> {new_stop}: {outcome}")
             if reason:
                 state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, ref, reason, today)

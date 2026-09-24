@@ -7,9 +7,14 @@ from trading_agent.alerts import (
     alert_killswitch,
     alert_order_submitted,
     alert_research_summary,
+    alert_stock_bought,
+    alert_stock_sold,
+    alert_stop_raised,
     alert_trade_exited,
     alert_trade_queued,
+    build_daily_briefing_text,
     get_telegram_config,
+    send_daily_morning_briefing,
     send_telegram,
 )
 
@@ -65,6 +70,40 @@ def test_alert_helpers(mock_send):
     assert "[LIVE WEBULL]" in mock_send.call_args[0][0]
 
     mock_send.reset_mock()
+    alert_stock_bought("NVDA", 5, 120.0, stop_loss=115.0, take_profit=135.0, thesis="Strong earnings beat")
+    msg = mock_send.call_args[0][0]
+    assert "Stock Bought: NVDA" in msg
+    assert "120.00" in msg
+    assert "115.00" in msg
+    assert "135.00" in msg
+    assert "Strong earnings beat" in msg
+
+    mock_send.reset_mock()
+    alert_stock_sold("NVDA", 5, 135.0, entry_price=120.0, reason="take_profit", pnl=75.0, pnl_pct=12.5)
+    msg = mock_send.call_args[0][0]
+    assert "Stock Sold: NVDA" in msg
+    assert "135.00" in msg
+    assert "+$75.00" in msg
+    assert "+12.50%" in msg
+    assert "Take-Profit Target Hit" in msg
+
+    mock_send.reset_mock()
+    alert_stock_sold("PLTR", 2, 185.0, entry_price=190.0, reason="stop_loss", pnl=-10.0, pnl_pct=-2.63)
+    msg = mock_send.call_args[0][0]
+    assert "Stock Sold: PLTR" in msg
+    assert "185.00" in msg
+    assert "-$10.00" in msg
+    assert "Protective Stop Triggered" in msg
+
+    mock_send.reset_mock()
+    alert_stop_raised("PLTR", old_stop=191.0, new_stop=196.0, current_price=200.0)
+    msg = mock_send.call_args[0][0]
+    assert "Trailing Stop Raised: PLTR" in msg
+    assert "196.00" in msg
+    assert "191.00" in msg
+    assert "200.00" in msg
+
+    mock_send.reset_mock()
     alert_trade_exited("NVDA", 10, 135.0, "take_profit")
     assert "Exit Order" in mock_send.call_args[0][0]
     assert "take_profit" in mock_send.call_args[0][0]
@@ -79,7 +118,6 @@ def test_alert_helpers(mock_send):
 
 
 def test_daily_morning_briefing():
-    from trading_agent.alerts import build_daily_briefing_text, send_daily_morning_briefing
     from trading_agent.schemas import AccountState, Position
 
     acct = AccountState(
@@ -96,13 +134,16 @@ def test_daily_morning_briefing():
     )
     text = build_daily_briefing_text(acct, date_str="23 Sep 2026")
     assert "Morning Briefing" in text
-    assert "$956.11" in text
+    assert "$956.11 USD" in text
     assert "GOOG" in text
     assert "NFLX" in text
+    assert "P&L Summary" in text
+    assert "Open Unrealized P&L" in text
     assert "Senior Trade Analyst" in text
 
     with patch("trading_agent.alerts.send_telegram", return_value=True) as mock_tg:
         ok = send_daily_morning_briefing(acct, date_str="23 Sep 2026")
         assert ok is True
         assert mock_tg.called
+
 
