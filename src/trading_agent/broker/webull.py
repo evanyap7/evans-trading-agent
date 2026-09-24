@@ -87,7 +87,7 @@ class WebullBroker:
             raise BrokerError("WEBULL_APP_KEY / WEBULL_APP_SECRET are not set")
         self.account_id = account_id
         self.environment = environment
-        client = ApiClient(key, secret, region, connect_timeout=5, timeout=15)
+        client = ApiClient(key, secret, region, connect_timeout=15, timeout=30)
         if token_dir := os.environ.get("WEBULL_TOKEN_DIR"):
             client.set_token_dir(token_dir)
         if environment == "uat":
@@ -103,12 +103,18 @@ class WebullBroker:
 
     def _call_with_retry(self, fn, max_retries: int = 3, delay: float = 2.0):
         import time
+        retryable_markers = (
+            "TOO_MANY_REQUESTS", "TOOMANYREQUESTS", "429",
+            "TIMED OUT", "TIMEOUT", "HTTPERROR",
+            "CONNECTIONERROR", "CONNECTIONRESET", "CONNECTIONABORTED", "REMOTE DISCONNECTED",
+            "502", "503", "504", "BAD GATEWAY", "GATEWAY TIMEOUT", "SERVICE UNAVAILABLE",
+        )
         for attempt in range(max_retries + 1):
             try:
                 return fn()
             except Exception as e:
-                err_str = (str(e) + " " + getattr(e, "error_code", "")).upper()
-                if ("TOO_MANY_REQUESTS" in err_str or "TOOMANYREQUESTS" in err_str or "429" in err_str) and attempt < max_retries:
+                err_str = (str(e) + " " + str(getattr(e, "error_code", ""))).upper()
+                if any(m in err_str for m in retryable_markers) and attempt < max_retries:
                     time.sleep(delay * (attempt + 1))
                     continue
                 raise
