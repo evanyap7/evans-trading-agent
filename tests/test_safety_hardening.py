@@ -80,6 +80,25 @@ def test_webull_get_order_never_returns_a_different_order():
     assert b.get_order("mine").status == BrokerOrderStatus.NOT_FOUND
 
 
+def test_webull_call_with_retry_retries_on_timeout():
+    from webull.core.exception.exceptions import ClientException
+    from trading_agent.broker.webull import WebullBroker
+
+    b = WebullBroker.__new__(WebullBroker)
+    attempts = 0
+
+    def flaky():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ClientException("SDK_HTTP_ERROR", "HTTPSConnectionPool: Read timed out. (read timeout=5)")
+        return {"data": "ok"}
+
+    res = b._call_with_retry(flaky, max_retries=3, delay=0.01)
+    assert res == {"data": "ok"}
+    assert attempts == 3
+
+
 @pytest.mark.parametrize("http_status,ambiguous", [(500, True), (None, True), (400, False)])
 def test_webull_server_error_ambiguity(http_status, ambiguous):
     from webull.core.exception.exceptions import ServerException

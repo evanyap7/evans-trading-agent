@@ -9,7 +9,7 @@ conf/
 *.db
 *.sqlite
 *.sqlite3
-*.log
+*.log*
 *.pid
 
 # Python & testing caches
