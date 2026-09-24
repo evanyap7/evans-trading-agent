@@ -92,10 +92,103 @@ def alert_order_submitted(symbol: str, side: str, qty: int, price: float | None,
     send_telegram(msg)
 
 
+def alert_stock_bought(
+    symbol: str,
+    qty: float,
+    fill_price: float,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
+    thesis: str = "",
+) -> None:
+    """Dispatched immediately when a buy order fills at the broker."""
+    qty_str = f"{qty:g}"
+    total_val = qty * fill_price
+    lines = [
+        f"🟢 *Stock Bought: {symbol}*",
+        "",
+        f"• *Shares*: `{qty_str}`",
+        f"• *Execution Price*: `${fill_price:,.2f}`",
+        f"• *Total Value*: `${total_val:,.2f}`",
+    ]
+    if stop_loss is not None and stop_loss > 0:
+        downside_pct = ((stop_loss - fill_price) / fill_price) * 100
+        lines.append(f"• *Protective Stop*: `${stop_loss:,.2f}` (`{downside_pct:+.1f}%`)")
+    if take_profit is not None and take_profit > 0:
+        upside_pct = ((take_profit - fill_price) / fill_price) * 100
+        lines.append(f"• *Take Profit*: `${take_profit:,.2f}` (`{upside_pct:+.1f}%`)")
+    if thesis:
+        clean_thesis = thesis.strip().replace("_", " ").replace("*", " ")
+        if len(clean_thesis) > 180:
+            clean_thesis = clean_thesis[:177] + "..."
+        lines.append(f"\n📝 *Thesis*: {clean_thesis}")
+    lines.append("\n🛡️ _Broker-side protective stop armed at Webull._")
+    send_telegram("\n".join(lines))
+
+
+def alert_stock_sold(
+    symbol: str,
+    qty: float,
+    fill_price: float,
+    entry_price: float | None = None,
+    reason: str = "",
+    pnl: float | None = None,
+    pnl_pct: float | None = None,
+) -> None:
+    """Dispatched immediately when a sell order fills (stop, target, or thesis exit)."""
+    qty_str = f"{qty:g}"
+    total_val = qty * fill_price
+    is_profit = pnl is not None and pnl >= 0
+    emoji = "🎯" if is_profit else "🛡️"
+
+    # Human-readable exit reason
+    r_lower = reason.lower()
+    if "profit" in r_lower or "target" in r_lower:
+        friendly_reason = "Take-Profit Target Hit 🎯"
+    elif "stop" in r_lower:
+        friendly_reason = "Protective Stop Triggered 🛡️"
+    elif "time" in r_lower:
+        friendly_reason = "Time Horizon Limit Reached ⏱️"
+    elif "thesis" in r_lower or "rotation" in r_lower:
+        friendly_reason = "Capital Rotation / Thesis Invalidation 🔄"
+    else:
+        friendly_reason = reason or "Market Exit"
+
+    lines = [
+        f"{emoji} *Stock Sold: {symbol}*",
+        "",
+        f"• *Shares*: `{qty_str}`",
+        f"• *Execution Price*: `${fill_price:,.2f}`",
+        f"• *Total Proceeds*: `${total_val:,.2f}`",
+    ]
+    if entry_price is not None and entry_price > 0:
+        lines.append(f"• *Entry Price*: `${entry_price:,.2f}`")
+    if pnl is not None and pnl_pct is not None:
+        pnl_em = "🟢" if pnl >= 0 else "🔴"
+        sign = "+" if pnl >= 0 else "-"
+        lines.append(f"• *Realized P&L*: {pnl_em} `{sign}${abs(pnl):,.2f}` (`{pnl_pct:+,.2f}%`)")
+    lines.append(f"• *Reason*: `{friendly_reason}`")
+    send_telegram("\n".join(lines))
+
+
+def alert_stop_raised(symbol: str, old_stop: float | None, new_stop: float, current_price: float | None = None) -> None:
+    """Dispatched when an R-based ratcheting trailing stop moves up."""
+    lines = [
+        f"📈 *Trailing Stop Raised: {symbol}*",
+        "",
+        f"• *New Protected Stop*: `${new_stop:,.2f}`",
+    ]
+    if old_stop is not None and old_stop > 0:
+        lines.append(f"• *Previous Stop*: `${old_stop:,.2f}`")
+    if current_price is not None and current_price > 0:
+        lines.append(f"• *Current Price*: `${current_price:,.2f}`")
+    lines.append("• *Status*: Broker stop replaced at higher level (downside locked out).")
+    send_telegram("\n".join(lines))
+
+
 def alert_trade_exited(symbol: str, qty: int, price: float, reason: str) -> None:
     emoji = "🎯" if "profit" in reason.lower() else "🛡️"
     msg = (
-        f"{emoji} *Exit Order*\n\n"
+        f"{emoji} *Exit Order Submitted*\n\n"
         f"• *Ticker*: `{symbol}`\n"
         f"• *Shares*: `{qty}`\n"
         f"• *Reference Price*: `${price:.2f}`\n"
@@ -126,7 +219,7 @@ def alert_cycle_error(kind: str, error: str) -> None:
 
 
 def build_daily_briefing_text(account: Any, ledger: Any = None, date_str: str = "") -> str:
-    """Generates the executive-grade 9:00 AM daily portfolio & activity briefing."""
+    """Generates the executive-grade 9:00 AM daily portfolio & P&L briefing."""
     from datetime import datetime
 
     d_str = date_str or datetime.now().strftime("%d %b %Y")
@@ -135,24 +228,44 @@ def build_daily_briefing_text(account: Any, ledger: Any = None, date_str: str = 
         f"📅 *Date*: `{d_str} (09:00 SGT)`",
         "🏛️ *Account*: `Webull SG Cash`",
         "",
-        "💰 *Portfolio Snapshot*:",
-        f"• *Net Equity*: `${account.equity:,.2f}`",
-        f"• *USD Cash*: `${account.cash:,.2f}`",
-        f"• *Buying Power*: `${account.buying_power:,.2f}`",
+        "💰 *Portfolio & Capital Snapshot*:",
+        f"• *Net Equity*: `${account.equity:,.2f} USD`",
+        f"• *Available Cash*: `${account.cash:,.2f} USD`",
+        f"• *Buying Power*: `${account.buying_power:,.2f} USD`",
     ]
 
-    # Calculate 1-day equity movement if ledger is available
+    # Calculate Total Unrealized P&L across all positions
+    total_cost = 0.0
+    total_mkt = 0.0
+    for p in account.positions:
+        if p.avg_cost and p.avg_cost > 0:
+            total_cost += p.avg_cost * p.quantity
+            total_mkt += p.last_price * p.quantity
+
+    lines.append("\n📈 *P&L Summary*:")
+    # 1-day equity movement vs start of day if ledger is available
     if ledger is not None:
         try:
-            today_str = datetime.now().strftime("%Y-%m-%d")
             sod_equity = ledger.start_of_day_equity(datetime.now().date())
             if sod_equity and sod_equity > 0:
                 day_change = account.equity - sod_equity
                 day_pct = (account.equity / sod_equity - 1) * 100
-                emoji = "🟢" if day_change >= 0 else "🔴"
-                lines.append(f"• *Daily Performance*: {emoji} `${day_change:+,.2f}` (`{day_pct:+,.2f}%`)")
+                em = "🟢" if day_change >= 0 else "🔴"
+                sign = "+" if day_change >= 0 else "-"
+                lines.append(f"• *Daily Equity Change*: {em} `{sign}${abs(day_change):,.2f}` (`{day_pct:+,.2f}%`)")
         except Exception:
             pass
+
+    if total_cost > 0:
+        unrealized = total_mkt - total_cost
+        unrealized_pct = (unrealized / total_cost) * 100
+        em = "🟢" if unrealized >= 0 else "🔴"
+        sign = "+" if unrealized >= 0 else "-"
+        lines.append(f"• *Open Unrealized P&L*: {em} `{sign}${abs(unrealized):,.2f}` (`{unrealized_pct:+,.2f}%`)")
+        invested_pct = (total_mkt / account.equity * 100) if account.equity > 0 else 0.0
+        lines.append(f"• *Capital Allocation*: `${total_mkt:,.2f}` (`{invested_pct:.1f}%` invested)")
+
+    lines.append("• *Daily Profit Target*: `+$10.00 USD/day` (compounding goal)")
 
     lines.append("\n📊 *Current Holdings*:")
     if not account.positions:
@@ -172,37 +285,39 @@ def build_daily_briefing_text(account: Any, ledger: Any = None, date_str: str = 
                 pnl = (p.last_price - p.avg_cost) * p.quantity
                 pnl_pct = (p.last_price / p.avg_cost - 1) * 100
                 em = "🟢" if pnl >= 0 else "🔴"
-                pos_line += f"\n  └ {em} Unrealized P&L: `${pnl:+,.2f}` (`{pnl_pct:+,.2f}%`)"
+                sign = "+" if pnl >= 0 else "-"
+                pos_line += f"\n  └ Cost: `${p.avg_cost:,.2f}` | P&L: {em} `{sign}${abs(pnl):,.2f}` (`{pnl_pct:+,.2f}%`)"
             if p.symbol in open_trades:
                 t = open_trades[p.symbol]
-                pos_line += f"\n  └ 🛡️ Stop: `${t['stop_loss']:.2f}` | 🎯 Target: `${t['take_profit']:.2f}`"
+                stop_dist = ((t["stop_loss"] - p.last_price) / p.last_price) * 100
+                target_dist = ((t["take_profit"] - p.last_price) / p.last_price) * 100
+                pos_line += f"\n  └ 🛡️ Stop: `${t['stop_loss']:.2f}` (`{stop_dist:+.1f}%`) | 🎯 Target: `${t['take_profit']:.2f}` (`{target_dist:+.1f}%`)"
             lines.append(pos_line)
 
-    lines.append("\n📋 *Previous Day Activity & Executions*:")
+    lines.append("\n📋 *Recent Executions & Session Fills*:")
     activity_found = False
     if ledger is not None:
         try:
-            # Check closed trades
-            closed = list(ledger.iter_rows("SELECT * FROM trades WHERE status='CLOSED' ORDER BY closed_at DESC LIMIT 3"))
-            for c in closed:
+            # Query filled orders directly
+            fills = list(ledger.iter_rows(
+                "SELECT * FROM orders WHERE state='FILLED' ORDER BY updated_at DESC LIMIT 4"
+            ))
+            for f in fills:
                 activity_found = True
-                lines.append(f"• 🎯 *Closed {c['symbol']}*: {c['quantity']:g} shares | Reason: `{c['exit_reason']}`")
-            # Check recent order fills/submissions
-            recent_orders = list(ledger.iter_rows("SELECT * FROM orders ORDER BY created_at DESC LIMIT 3"))
-            for o in recent_orders:
-                activity_found = True
-                lines.append(f"• ⚡ *Order {o['symbol']}*: `{o['purpose']} {o['side']}` {o['quantity']:g} @ `${o['limit_price'] or 0:.2f}` -> `{o['state']}`")
+                side_em = "🟢" if f["side"] == "BUY" else "🔴"
+                px = f["filled_price"] or f["limit_price"] or 0.0
+                lines.append(f"• {side_em} *{f['side']} {f['symbol']}*: `{f['filled_quantity']:g}` sh @ `${px:,.2f}` ({f['purpose']})")
         except Exception:
             pass
 
     if not activity_found:
-        lines.append("• _All positions held within risk parameters. No exits or new entries triggered._")
+        lines.append("• _No new fills in the last session. Positions holding inside risk envelope._")
 
     lines.extend([
-        "\n🦅 *Senior Trade Analyst Stance*:",
-        "• *Mandate*: Always maximize profits and cut losses immediately.",
-        "• *Capital Rotation*: Active. Ready to liquidate stalled holdings if higher-velocity breakouts emerge.",
-        "• *Bias*: Bullish Asymmetry. Tight broker-side stops armed on all fills.",
+        "\n🦅 *Senior Trade Analyst & Risk Stance*:",
+        "• *Operating Mode*: Swing momentum with R-based ratcheting trailing stops.",
+        "• *Stop Automation*: Active at Webull SG (Breakeven at +1R, trailing at +2R).",
+        "• *US Market*: Regular trading session opens tonight at 9:30 PM SGT.",
     ])
 
     return "\n".join(lines)
