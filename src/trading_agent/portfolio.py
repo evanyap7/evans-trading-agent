@@ -23,12 +23,23 @@ def size_order(decision_id: str, p: TradeProposal, account: AccountState, avg_vo
     """Return a SizedOrder, or a string explaining why no size is possible."""
     a, ex = limits.account, limits.execution
     limit, stop = p.entry.limit_price, p.exit.stop_loss
-    per_share_risk = (limit - stop) + limit * ex.slippage_bps / 10_000 * 2
+    is_short = p.is_short
+
+    # Risk per share: distance from entry to stop, plus slippage on both legs.
+    if is_short:
+        per_share_risk = (stop - limit) + limit * ex.slippage_bps / 10_000 * 2
+        upside = limit - p.exit.take_profit   # profit when price falls
+        downside = stop - limit               # loss when price rises
+    else:
+        per_share_risk = (limit - stop) + limit * ex.slippage_bps / 10_000 * 2
+        upside = p.exit.take_profit - limit
+        downside = limit - stop
+
     if per_share_risk <= 0 or account.equity <= 0:
         return "non-positive risk per share or equity"
 
     kelly_pct = limits.signal.kelly_fraction * kelly_risk_fraction(
-        p.confidence, p.exit.take_profit - limit, limit - stop) * 100
+        p.confidence, upside, downside) * 100
     if kelly_pct <= 0:
         return "no Kelly edge: confidence does not beat the reward/risk break-even"
     risk_pct = min(p.requested_risk_pct, kelly_pct, a.max_risk_per_trade_pct)
@@ -57,7 +68,7 @@ def size_order(decision_id: str, p: TradeProposal, account: AccountState, avg_vo
         else:
             return f"size rounds to 0 shares (binding cap: {binding})"
     return SizedOrder(
-        decision_id=decision_id, symbol=p.symbol, side="BUY", quantity=qty, limit_price=limit, stop_loss=stop,
+        decision_id=decision_id, symbol=p.symbol, side=p.side, quantity=qty, limit_price=limit, stop_loss=stop,
         take_profit=p.exit.take_profit, notional=round(qty * limit, 2), risk_usd=round(qty * per_share_risk, 2),
         sizing_notes=[f"binding cap: {binding}", f"risk_pct used: {risk_pct:.3f}", f"kelly risk_pct: {kelly_pct:.3f}"],
     )
@@ -81,5 +92,27 @@ def trailed_stop(entry: float, initial_stop: float, current_stop: float, last: f
         candidate = max(candidate, last - ex.trail_distance_r * r)
     candidate = math.floor(candidate * 100) / 100  # whole cents, rounded away from the market
     if candidate >= last or candidate - current_stop < ex.trail_min_step_r * r:
+        return None
+    return candidate
+
+
+def trailed_stop_short(entry: float, initial_stop: float, current_stop: float, last: float,
+                       ex: ExecutionLimits) -> float | None:
+    """The new, lower stop for an open short, or None if it should stay where it is.
+
+    Mirror of `trailed_stop` for short positions: the stop ratchets *down* as the price falls
+    (i.e. as the short becomes more profitable). R = initial_stop - entry (the distance above
+    entry where the stop sits). The stop never moves up (toward the market)."""
+    r = initial_stop - entry
+    if not ex.trailing_stops or r <= 0 or last >= entry:
+        return None
+    gain_r = (entry - last) / r  # profit in R-multiples
+    candidate = current_stop
+    if gain_r >= ex.trail_breakeven_r:
+        candidate = min(candidate, entry)  # lock in breakeven
+    if gain_r >= ex.trail_start_r:
+        candidate = min(candidate, last + ex.trail_distance_r * r)  # trail down
+    candidate = math.ceil(candidate * 100) / 100  # whole cents, rounded toward the market (up for shorts)
+    if candidate <= last or current_stop - candidate < ex.trail_min_step_r * r:
         return None
     return candidate
