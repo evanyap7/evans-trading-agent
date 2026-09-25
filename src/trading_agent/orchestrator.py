@@ -21,7 +21,7 @@ from .features import build_evidence
 from .killswitch import KillSwitch
 from .ledger import Ledger
 from .market_calendar import ET, is_regular_session, is_trading_day, to_trading_date
-from .portfolio import size_order, trailed_stop
+from .portfolio import size_order, trailed_stop, trailed_stop_short
 from .risk import OpenRisk, RiskContext, evaluate
 from .schemas import AccountState, Evidence, OrderState, Proposal, TradeProposal, utcnow
 from .verifier import verify
@@ -96,33 +96,61 @@ class Orchestrator:
             if state == OrderState.UNKNOWN_RECONCILE:
                 issues.append(f"order {row['client_order_id']} ({row['symbol']}) state unknown at broker")
         held = {p.symbol: p.quantity for p in account.positions}
-        expected: dict[str, float] = {}
+        expected_long: dict[str, float] = {}
+        expected_short: dict[str, float] = {}
         for t in self.ledger.open_trades():
-            expected[t["symbol"]] = expected.get(t["symbol"], 0) + t["quantity"]
-        for sym, qty in expected.items():
-            if held.get(sym, 0) + 1e-9 < qty:
+            side = t["side"] if "side" in t.keys() else "BUY"
+            if side == "SELL_SHORT":
+                expected_short[t["symbol"]] = expected_short.get(t["symbol"], 0) + t["quantity"]
+            else:
+                expected_long[t["symbol"]] = expected_long.get(t["symbol"], 0) + t["quantity"]
+
+        for sym, exp_qty in expected_long.items():
+            h_qty = held.get(sym, 0)
+            if h_qty + 1e-9 < exp_qty:
                 stop_filled = any(
-                    r["purpose"] == "STOP" and r["state"] == OrderState.FILLED.value
+                    r["purpose"].startswith("STOP") and r["state"] == OrderState.FILLED.value
                     for r in self.ledger.iter_rows("SELECT * FROM orders WHERE symbol=?", (sym,))
                 )
                 if not stop_filled:
-                    issues.append(f"{sym}: ledger expects {qty} shares, broker shows {held.get(sym, 0)}")
+                    issues.append(f"{sym}: ledger expects {exp_qty} long shares, broker shows {h_qty}")
+
+        for sym, exp_qty in expected_short.items():
+            h_qty = held.get(sym, 0)
+            actual_short_qty = -h_qty if h_qty < 0 else (h_qty if h_qty > 0 and sym not in expected_long else 0)
+            if actual_short_qty + 1e-9 < exp_qty:
+                stop_filled = any(
+                    r["purpose"].startswith("STOP") and r["state"] == OrderState.FILLED.value
+                    for r in self.ledger.iter_rows("SELECT * FROM orders WHERE symbol=?", (sym,))
+                )
+                if not stop_filled:
+                    issues.append(f"{sym}: ledger expects {exp_qty} short shares, broker shows {h_qty}")
         ok = not issues
         self.ledger.append("reconciliation", {"ok": ok, "issues": issues})
         return ok, issues
 
     def _open_risks(self, account: AccountState) -> list[OpenRisk]:
         stops = {t["symbol"]: t["stop_loss"] for t in self.ledger.open_trades()}
-        risks = [OpenRisk(p.symbol, p.quantity, p.last_price, stops.get(p.symbol)) for p in account.positions]
+        sides = {t["symbol"]: (t["side"] if "side" in t.keys() else "BUY") for t in self.ledger.open_trades()}
+        risks = []
+        for p in account.positions:
+            is_short = sides.get(p.symbol) == "SELL_SHORT"
+            qty = -abs(p.quantity) if is_short else p.quantity
+            risks.append(OpenRisk(p.symbol, qty, p.last_price, stops.get(p.symbol)))
         pending = {r["decision_id"]: r for r in self.ledger.iter_rows("SELECT * FROM pending_actions")}
         for o in self.ledger.live_orders():
             if o["purpose"] != "ENTRY":
                 continue
             stop = None
             if o["decision_id"] in pending:
-                stop = Proposal.model_validate_json(pending[o["decision_id"]]["proposal"]).trade.exit.stop_loss
+                prop = Proposal.model_validate_json(pending[o["decision_id"]]["proposal"])
+                stop = prop.trade.exit.stop_loss
+                is_short = prop.trade.is_short
+            else:
+                is_short = o["side"] == "SELL"
             remaining = o["quantity"] - o["filled_quantity"]
-            risks.append(OpenRisk(o["symbol"], remaining, o["limit_price"] or 0, stop))
+            qty = -remaining if is_short else remaining
+            risks.append(OpenRisk(o["symbol"], qty, o["limit_price"] or 0, stop))
         return risks
 
     def _risk_context(self, account: AccountState, quote, decision_id: str, require_session: bool,
@@ -329,15 +357,18 @@ class Orchestrator:
                 self.ledger.set_pending_status(prop.decision_id, "DROPPED")
                 rep.add(f"{t.symbol}: risk rejected at execution: {', '.join(d.failed_checks)}")
                 continue
+            # Direction-aware order submission
+            entry_side = "SELL" if t.is_short else "BUY"
             req = OrderRequest(client_order_id=client_order_id(prop.decision_id, "ENTRY"), symbol=t.symbol,
-                               side="BUY", order_type="LIMIT", quantity=sized.quantity, time_in_force="DAY",
+                               side=entry_side, order_type="LIMIT", quantity=sized.quantity, time_in_force="DAY",
                                limit_price=round(sized.limit_price, 2), instrument_type=t.instrument_type)
             state = self.exec.submit(req, prop.decision_id, "ENTRY")
             self.ledger.set_pending_status(prop.decision_id, "SUBMITTED")
-            rep.add(f"{t.symbol}: BUY {sized.quantity} @ {sized.limit_price} -> {state.value}")
+            rep.add(f"{t.symbol}: {entry_side} {sized.quantity} @ {sized.limit_price} -> {state.value}")
             try:
                 from .alerts import alert_order_submitted
-                alert_order_submitted(t.symbol, "BUY", sized.quantity, sized.limit_price, is_shadow=not self.sends_real_orders_to_prod)
+                alert_order_submitted(t.symbol, entry_side, sized.quantity, sized.limit_price,
+                                      is_shadow=not self.sends_real_orders_to_prod)
             except Exception:
                 pass
             account = self._account()  # refresh so the next order sees this one's cash and exposure
@@ -365,25 +396,34 @@ class Orchestrator:
             self.ledger.set_pending_status(row["decision_id"], "DROPPED")
             return
         held = account.position(symbol)
-        if held is None or held.quantity <= 0:
+        if held is None or held.quantity == 0:
             self.ledger.set_pending_status(row["decision_id"], "DROPPED")
             return
+        trade_side = trade["side"] if trade and "side" in trade.keys() else ("SELL_SHORT" if held.quantity < 0 else "BUY")
+        is_short = trade_side == "SELL_SHORT"
         if trade is None and not self.limits.live_trading.agent_may_close_manual_positions:
             self.ledger.set_pending_status(row["decision_id"], "DROPPED")
             rep.add(f"{symbol}: agent exit dropped (manual position, agent_may_close_manual_positions is off)")
             return
-        ref = self._exit_price(q)
+        ref = self._exit_price(q, is_short=is_short)
         if ref is None:
             self.ledger.set_pending_status(row["decision_id"], "DROPPED")
             rep.add(f"{symbol}: agent exit dropped (no fresh usable price)")
             return
-        qty = int(min(trade["quantity"] if trade else held.quantity, held.quantity))
+        held_qty = abs(held.quantity)
+        qty = int(min(trade["quantity"] if trade else held_qty, held_qty))
         if qty > 0:
-            state = self.exec.exit_trade(did, symbol, qty, ref, "agent_thesis_exit", today)
-            rep.add(f"{symbol}: agent exit SELL {qty} -> {state.value}")
+            state = self.exec.exit_trade(did, symbol, qty, ref, "agent_thesis_exit", today, is_short=is_short)
+            action_desc = "BUY_COVER" if is_short else "SELL"
+            rep.add(f"{symbol}: agent exit {action_desc} {qty} -> {state.value}")
             try:
-                from .alerts import alert_trade_exited
-                alert_trade_exited(symbol, qty, ref, f"agent_thesis_exit ({state.value})")
+                if is_short:
+                    from .alerts import alert_short_covered
+                    alert_short_covered(symbol, qty, ref, trade["entry_price"] if trade else None,
+                                        f"agent_thesis_exit ({state.value})", None, None)
+                else:
+                    from .alerts import alert_trade_exited
+                    alert_trade_exited(symbol, qty, ref, f"agent_thesis_exit ({state.value})")
             except Exception:
                 pass
         self.ledger.set_pending_status(row["decision_id"], "SUBMITTED")
@@ -459,10 +499,15 @@ class Orchestrator:
 
     MAX_EXIT_QUOTE_AGE_SECONDS = 900
 
-    def _exit_price(self, q) -> float | None:
-        """Reference price for a sell: the bid, else last. None if the quote is too old to act on."""
+    def _exit_price(self, q, *, is_short: bool = False) -> float | None:
+        """Reference price for closing a position. None if the quote is too old to act on.
+
+        For longs (selling): use the bid, then last.
+        For shorts (covering): use the ask, then last."""
         if q is None or q.age_seconds(self.now()) > self.MAX_EXIT_QUOTE_AGE_SECONDS:
             return None
+        if is_short:
+            return q.ask if q.ask > 0 else (q.last if q.last > 0 else None)
         return q.bid if q.bid > 0 else (q.last if q.last > 0 else None)
 
     def _claim_cycle(self, kind: str, td_or_slot: date | str) -> bool:
@@ -501,33 +546,57 @@ class Orchestrator:
             held = account.position(t["symbol"])
             if held is None:
                 continue
+            trade_side = t["side"] if "side" in t.keys() else "BUY"
+            is_short = trade_side == "SELL_SHORT"
+            held_qty = abs(held.quantity) if is_short else held.quantity
+            if held_qty <= 0:
+                continue
+            qty = int(min(t["quantity"], held_qty))
             if self.exec.send_orders and self.limits.execution.broker_side_stops:
-                self.exec.ensure_protective_stop(t["decision_id"], t["symbol"], int(min(t["quantity"], held.quantity)),
-                                                 t["stop_loss"])
-            ref = self._exit_price(q)
+                self.exec.ensure_protective_stop(t["decision_id"], t["symbol"], qty,
+                                                 t["stop_loss"], is_short=is_short)
+            ref = self._exit_price(q, is_short=is_short)
             if ref is None:
                 rep.add(f"{t['symbol']}: no fresh quote; software exits skipped (broker stop still active)")
                 continue
-            qty = int(min(t["quantity"], held.quantity))
             reason = None
-            if q.last <= t["stop_loss"]:
-                reason = "stop_breached"
-            elif q.last >= t["take_profit"]:
-                reason = "take_profit"
-            elif today >= date.fromisoformat(t["time_stop_date"]):
-                reason = "time_stop"
+            if is_short:
+                # Short: stop is above entry, target is below entry
+                if q.last >= t["stop_loss"]:
+                    reason = "stop_breached"
+                elif q.last <= t["take_profit"]:
+                    reason = "take_profit"
+                elif today >= date.fromisoformat(t["time_stop_date"]):
+                    reason = "time_stop"
+            else:
+                if q.last <= t["stop_loss"]:
+                    reason = "stop_breached"
+                elif q.last >= t["take_profit"]:
+                    reason = "take_profit"
+                elif today >= date.fromisoformat(t["time_stop_date"]):
+                    reason = "time_stop"
             if reason is None:
                 initial = t["initial_stop"] if t["initial_stop"] is not None else t["stop_loss"]
-                new_stop = trailed_stop(t["entry_price"], initial, t["stop_loss"], q.last, self.limits.execution)
+                if is_short:
+                    new_stop = trailed_stop_short(t["entry_price"], initial, t["stop_loss"], q.last,
+                                                  self.limits.execution)
+                else:
+                    new_stop = trailed_stop(t["entry_price"], initial, t["stop_loss"], q.last, self.limits.execution)
                 if new_stop is not None:
                     outcome = self.exec.raise_protective_stop(t["decision_id"], t["symbol"], qty, new_stop, current_price=q.last)
                     rep.add(f"{t['symbol']}: trail stop {t['stop_loss']} -> {new_stop}: {outcome}")
             if reason:
-                state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, ref, reason, today)
-                rep.add(f"{t['symbol']}: {reason} -> SELL {qty} {state.value}")
+                state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, ref, reason, today,
+                                             is_short=is_short)
+                rep.add(f"{t['symbol']}: {reason} -> {'BUY_COVER' if is_short else 'SELL'} {qty} {state.value}")
                 try:
-                    from .alerts import alert_trade_exited
-                    alert_trade_exited(t["symbol"], qty, ref, f"{reason} ({state.value})")
+                    if is_short:
+                        from .alerts import alert_short_covered
+                        alert_short_covered(t["symbol"], qty, ref, t["entry_price"],
+                                            f"{reason} ({state.value})", None, None)
+                    else:
+                        from .alerts import alert_trade_exited
+                        alert_trade_exited(t["symbol"], qty, ref, f"{reason} ({state.value})")
                 except Exception:
                     pass
         rep.add(f"equity {account.equity:.2f}, {len(trades)} open system trades, reconciled={reconciled}")

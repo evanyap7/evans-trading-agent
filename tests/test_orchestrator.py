@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from conftest import AFTER_CLOSE, IN_SESSION, ScriptedAgent, good_proposal, make_orchestrator, seeded_broker
+from conftest import AFTER_CLOSE, IN_SESSION, ScriptedAgent, good_proposal, good_short_proposal, make_orchestrator, seeded_broker
 from trading_agent.config import TradingMode
 from trading_agent.schemas import AgentOutput, OrderState
 
@@ -229,4 +229,66 @@ def test_continuous_intraday_trading_tick(tmp_path):
     # Continuous trading active: runs execute, research (intraday slot), execute (pending entries), monitor
     assert "research" in kinds(reps)
     assert "monitor" in kinds(reps)
+
+
+# -- Short trading end-to-end tests ---------------------------------------------
+
+def one_short_idea(ctx):
+    return AgentOutput(market_view="risk-off", proposals=[good_short_proposal(ctx)])
+
+
+def _run_short_research_then_execute(tmp_path, mode=TradingMode.BROKER, env="uat"):
+    broker = seeded_broker(IN_SESSION)
+    from trading_agent.config import load_risk_limits
+    short_limits = load_risk_limits()
+    short_limits = short_limits.model_copy(update={
+        "live_trading": short_limits.live_trading.model_copy(update={"permit_shorting": True})
+    })
+    research = make_orchestrator(tmp_path, broker, ScriptedAgent(one_short_idea), AFTER_CLOSE, mode, env, limits=short_limits)
+    rep = research.research()
+    assert any("queued" in n for n in rep.notes), rep.notes
+    execute = make_orchestrator(tmp_path, broker, ScriptedAgent(one_short_idea), IN_SESSION, mode, env, limits=short_limits)
+    return broker, execute, execute.execute(), short_limits
+
+
+def test_full_cycle_short_entry_fill_stop_and_take_profit(tmp_path):
+    broker, orch, rep, short_limits = _run_short_research_then_execute(tmp_path)
+    assert any("SELL" in n for n in rep.notes), rep.notes
+    trades = orch.ledger.open_trades()
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["side"] == "SELL_SHORT"
+    assert broker.positions["XLK"].quantity == -t["quantity"]
+
+    stops = [o for o in broker.orders.values() if o.order_type == "STOP_LOSS"]
+    assert len(stops) == 1
+    assert stops[0].side == "BUY"
+    assert stops[0].stop_price == t["stop_loss"]
+    assert stops[0].quantity == t["quantity"]
+
+    # Price drops to take-profit (profitable for short)
+    tp = t["take_profit"]
+    broker.set_quote("XLK", bid=tp - 0.5, ask=tp - 0.4, last=tp - 0.45, fetched_at=IN_SESSION)
+    rep = orch.monitor()
+    assert any("take_profit" in n for n in rep.notes), rep.notes
+    assert "XLK" not in broker.positions
+    assert orch.ledger.open_trades() == []
+    assert all(o.status.value != "WORKING" for o in broker.orders.values())  # protective stop was cancelled
+
+
+def test_short_stop_trails_to_breakeven_at_one_r(tmp_path):
+    broker, orch, rep, short_limits = _run_short_research_then_execute(tmp_path)
+    t = orch.ledger.open_trades()[0]
+    entry, r = t["entry_price"], t["stop_loss"] - t["entry_price"]  # stop is ABOVE entry for short
+    last = round(entry - 1.2 * r, 2)  # price drops by 1.2R
+    broker.set_quote(t["symbol"], bid=last - 0.02, ask=last, last=last, fetched_at=IN_SESSION)
+    rep = orch.monitor()
+    assert any("trail stop" in n for n in rep.notes), rep.notes
+
+    trade = orch.ledger.open_trades()[0]
+    assert trade["stop_loss"] == entry and trade["initial_stop"] == t["stop_loss"]
+    working = [o for o in broker.orders.values() if o.order_type == "STOP_LOSS" and o.status.value == "WORKING"]
+    assert len(working) == 1 and working[0].stop_price == entry
+    assert working[0].side == "BUY"
+
 
