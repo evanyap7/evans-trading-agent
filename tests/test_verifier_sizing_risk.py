@@ -137,3 +137,36 @@ def test_stock_without_earnings_date_blocked_and_earnings_in_window_blocked(setu
     assert "no_earnings_in_holding_window" in evaluate(s, "EQUITY", 10, _ctx(b), strict_limits, universe, soon).failed_checks
     later = Events(earnings={"AAPL": date(2026, 12, 1)})
     assert "no_earnings_in_holding_window" not in evaluate(s, "EQUITY", 10, _ctx(b), strict_limits, universe, later).failed_checks
+
+
+def test_kelly_risk_fraction_matches_binary_kelly():
+    from trading_agent.portfolio import kelly_risk_fraction
+    assert kelly_risk_fraction(0.6, 2.0, 1.0) == pytest.approx(0.4)   # 0.6 - 0.4 / 2
+    assert kelly_risk_fraction(1 / 3, 2.0, 1.0) == pytest.approx(0.0)  # break-even
+    assert kelly_risk_fraction(0.3, 2.0, 1.0) < 0
+
+
+def test_verifier_rejects_bet_not_mispriced_enough(setup, limits, universe):
+    b, ctx, cyc, feats = setup
+    # 2:1 setup breaks even at 33.3%; 0.40 is under the 8-point edge even though EV is positive.
+    p = good_proposal(ctx, confidence=0.40, expected_return_pct=0.5)
+    v = run_verify(p, cyc, feats, b, limits, universe)
+    assert any("probability edge" in f for f in v.failures)
+    assert v.metrics["breakeven_probability"] == pytest.approx(1 / 3, abs=0.01)
+
+
+def test_kelly_caps_risk_below_request(setup, limits):
+    b, ctx, _, feats = setup
+    # 2:1 setup at confidence 0.35: full Kelly 0.35 - 0.65 / 2 = 2.5%, quarter Kelly ~0.625% < the 1% requested.
+    s = size_order("d1", good_proposal(ctx, confidence=0.35, requested_risk_pct=1.0), b.get_account(),
+                   feats["XLK"]["avg_volume_20d"], limits)
+    assert not isinstance(s, str)
+    used = float(next(n for n in s.sizing_notes if n.startswith("risk_pct used")).split(": ")[1])
+    assert used == pytest.approx(0.625, abs=0.02)
+
+
+def test_sizing_refuses_without_kelly_edge(setup, limits):
+    b, ctx, _, feats = setup
+    s = size_order("d1", good_proposal(ctx, confidence=0.30, expected_return_pct=-0.1), b.get_account(),
+                   feats["XLK"]["avg_volume_20d"], limits)
+    assert isinstance(s, str) and "Kelly" in s

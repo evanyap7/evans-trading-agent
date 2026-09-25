@@ -28,8 +28,8 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Telegram personal assistant bot alerts & 9:00 AM daily executive morning briefing | `alerts.py` |
 | Rule-based momentum baseline, the benchmark the LLM has to beat | `agents.py` |
 | Point-in-time price features as citable evidence | `features.py` |
-| Quant verifier: grounding, freshness, price collar, ATR stop, R:R, net edge after costs | `verifier.py` |
-| Position sizing from risk budget and caps (the LLM never picks quantity) | `portfolio.py` |
+| Quant verifier: grounding, freshness, price collar, ATR stop, R:R, probability edge vs break-even, net edge after costs | `verifier.py` |
+| Position sizing from fractional Kelly, risk budget and caps (the LLM never picks quantity) | `portfolio.py` |
 | Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |
 | Capital rotation & pre-existing portfolio position exit engine | `orchestrator.py`, `execution.py` |
 | Idempotent execution: deterministic client order IDs, preview check, no blind retries | `execution.py` |
@@ -43,6 +43,21 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 **Not built yet:** offline backtester replay engine (Phase 3), Postgres/Timescale database backend,
 web dashboard, real-time WebSocket order-event stream (gRPC/polling used instead), options (Phase 7;
 Webull's own MCP config marks SG as `supports_options=False`).
+
+## Edge, Kelly and scan cadence
+
+The rules below come from a Polymarket agent (scan often, only bet when the price is off by more
+than 8%, size with Kelly, never have more than 6% at risk). Here they are applied to stocks:
+
+- **Mispricing gate.** A stop/target pair has a break-even win rate of `down / (up + down)`, which is
+  33% for a 2:1 setup. The verifier rejects any idea whose `confidence` doesn't beat that by
+  `signal.min_probability_edge` (0.08).
+- **Kelly sizing.** Risk per trade is `kelly_fraction x (p - (1 - p) / reward_risk)` of equity (quarter
+  Kelly by default). It is still capped by `requested_risk_pct` and `max_risk_per_trade_pct`. An idea with no
+  Kelly edge gets no size.
+- **6% at risk.** `max_portfolio_risk_pct: 6.0` caps the sum of `(price - stop) x qty` across open positions.
+- **10-minute scans.** With `CONTINUOUS_TRADING=true`, the research pass runs every
+  `SCAN_INTERVAL_MINUTES` (default 10) during regular hours. Each scan is an LLM call, so costs scale with it.
 
 ## Setup
 

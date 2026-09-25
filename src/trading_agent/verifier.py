@@ -78,6 +78,8 @@ def verify(
     up = (tp - limit) / limit * 100
     down = (limit - stop) / limit * 100
     rr = up / down
+    breakeven_p = down / (up + down)  # win rate at which this stop/target pair has zero expectancy
+    prob_edge = p.confidence - breakeven_p
     ev_from_confidence = p.confidence * up - (1 - p.confidence) * down
     edge = min(p.expected_return_pct, ev_from_confidence)
     spread = quote.spread_pct if quote_ok and quote else 0.05
@@ -85,6 +87,7 @@ def verify(
     costs = spread + 2 * ex.slippage_bps / 100 + fee_pct
     net = edge - costs - sig.safety_buffer_pct
     m.update(upside_pct=round(up, 3), downside_pct=round(down, 3), reward_risk=round(rr, 3),
+             breakeven_probability=round(breakeven_p, 3), probability_edge=round(prob_edge, 3),
              ev_from_confidence_pct=round(ev_from_confidence, 3), cost_pct=round(costs, 3), net_edge_pct=round(net, 3))
     if p.expected_return_pct > up + 1e-9:
         fails.append("expected return exceeds the take-profit move")
@@ -92,6 +95,9 @@ def verify(
         fails.append(f"reward/risk {rr:.2f} < {sig.min_reward_risk}")
     if p.confidence < sig.min_confidence:
         fails.append(f"confidence {p.confidence} < {sig.min_confidence}")
+    if prob_edge < sig.min_probability_edge:
+        fails.append(f"probability edge {prob_edge:.3f} < {sig.min_probability_edge} "
+                     f"(confidence {p.confidence} vs break-even {breakeven_p:.3f})")
     if net < sig.min_net_edge_pct:
         fails.append(f"net edge {net:.2f}% < {sig.min_net_edge_pct}%")
 
