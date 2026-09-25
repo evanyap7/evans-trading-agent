@@ -101,3 +101,48 @@ def test_partial_fill_then_restart_is_recovered(sim, ledger, limits, tmp_path):
     restarted = ExecutionEngine(sim, ledger, limits, send_orders=True)
     assert restarted.sync(coid) == OrderState.PARTIALLY_FILLED
     assert ledger.get_order(coid)["filled_quantity"] == 2
+
+
+# -- Short execution and ledger tests -------------------------------------------
+
+def test_short_protective_stop_is_buy_order(sim, ledger, limits):
+    eng = ExecutionEngine(sim, ledger, limits, send_orders=True)
+    state = eng.place_protective_stop("d_short_1", "XLK", 10, 105.0, is_short=True)
+    assert state == OrderState.ACKNOWLEDGED
+    stop_order = next(o for o in sim.orders.values() if o.order_type == "STOP_LOSS")
+    assert stop_order.side == "BUY"
+    assert stop_order.stop_price == 105.0
+
+
+def test_short_exit_is_buy_cover(sim, ledger, limits):
+    from datetime import date
+    eng = ExecutionEngine(sim, ledger, limits, send_orders=True)
+    state = eng.exit_trade("d_short_2", "XLK", 5, 95.0, "take_profit", date(2026, 9, 22), is_short=True)
+    assert state == OrderState.ACKNOWLEDGED
+    coid = client_order_id("d_short_2", "EXIT:2026-09-22")
+    exit_order = sim.orders[coid]
+    assert exit_order.side == "BUY"
+    # Buy to cover limit collar is above market
+    assert exit_order.limit_price >= 95.0
+
+
+def test_ledger_stores_side_and_raise_stop_direction(ledger):
+    from datetime import date
+    # Long trade: stop only moves UP
+    ledger.open_trade("d_long", "AAPL", 10, 100.0, 95.0, 110.0, date(2026, 10, 1), side="BUY")
+    t_long = next(t for t in ledger.open_trades() if t["decision_id"] == "d_long")
+    assert t_long["side"] == "BUY"
+    ledger.raise_stop("d_long", 97.0)  # moves up: allowed
+    assert next(t for t in ledger.open_trades() if t["decision_id"] == "d_long")["stop_loss"] == 97.0
+    ledger.raise_stop("d_long", 94.0)  # moves down: rejected for long
+    assert next(t for t in ledger.open_trades() if t["decision_id"] == "d_long")["stop_loss"] == 97.0
+
+    # Short trade: stop only moves DOWN
+    ledger.open_trade("d_short", "TSLA", 5, 200.0, 210.0, 180.0, date(2026, 10, 1), side="SELL_SHORT")
+    t_short = next(t for t in ledger.open_trades() if t["decision_id"] == "d_short")
+    assert t_short["side"] == "SELL_SHORT"
+    ledger.raise_stop("d_short", 205.0)  # moves down (toward profit): allowed
+    assert next(t for t in ledger.open_trades() if t["decision_id"] == "d_short")["stop_loss"] == 205.0
+    ledger.raise_stop("d_short", 212.0)  # moves up (away from profit): rejected for short
+    assert next(t for t in ledger.open_trades() if t["decision_id"] == "d_short")["stop_loss"] == 205.0
+
