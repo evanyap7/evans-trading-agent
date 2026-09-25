@@ -119,6 +119,8 @@ class Ledger:
         cols = {r["name"] for r in self.db.execute("PRAGMA table_info(trades)")}
         if "initial_stop" not in cols:  # trades opened before trailing stops: current stop = initial stop
             self.db.execute("ALTER TABLE trades ADD COLUMN initial_stop REAL")
+        if "side" not in cols:  # trades opened before long/short support default to long
+            self.db.execute("ALTER TABLE trades ADD COLUMN side TEXT DEFAULT 'BUY'")
 
     # -- append-only event log ------------------------------------------------
 
@@ -246,17 +248,19 @@ class Ledger:
     # -- trades (system-opened positions) ---------------------------------------
 
     def open_trade(self, decision_id: str, symbol: str, quantity: float, entry_price: float,
-                   stop_loss: float, take_profit: float, time_stop_date: date) -> None:
+                   stop_loss: float, take_profit: float, time_stop_date: date,
+                   *, side: str = "BUY") -> None:
         self.db.execute(
             "INSERT OR IGNORE INTO trades (decision_id, symbol, quantity, entry_price, stop_loss, take_profit,"
-            " time_stop_date, opened_at, status, closed_at, exit_reason, initial_stop)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " time_stop_date, opened_at, status, closed_at, exit_reason, initial_stop, side)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (decision_id, symbol, quantity, entry_price, stop_loss, take_profit, time_stop_date.isoformat(),
-             utcnow().isoformat(), "OPEN", None, None, stop_loss),
+             utcnow().isoformat(), "OPEN", None, None, stop_loss, side),
         )
         self.append("trade_opened", {"symbol": symbol, "quantity": quantity, "entry_price": entry_price,
                                      "stop_loss": stop_loss, "take_profit": take_profit,
-                                     "time_stop_date": time_stop_date.isoformat()}, decision_id=decision_id)
+                                     "time_stop_date": time_stop_date.isoformat(), "side": side},
+                    decision_id=decision_id)
 
     def open_trades(self) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM trades WHERE status='OPEN'").fetchall()
@@ -266,10 +270,19 @@ class Ledger:
         self.append("trade_reduced", {"remaining_quantity": remaining_quantity}, decision_id=decision_id)
 
     def raise_stop(self, decision_id: str, new_stop: float) -> None:
-        """Move a trade's stop up. Never down: a lower value is ignored."""
-        row = self.db.execute("SELECT stop_loss FROM trades WHERE decision_id=?", (decision_id,)).fetchone()
-        if row is None or new_stop <= row["stop_loss"]:
+        """Move a trade's stop toward safety. For longs: up. For shorts: down. Never the reverse."""
+        row = self.db.execute("SELECT stop_loss, side FROM trades WHERE decision_id=?", (decision_id,)).fetchone()
+        if row is None:
             return
+        is_short = (row["side"] if "side" in row.keys() else "BUY") == "SELL_SHORT"
+        if is_short:
+            # Short stop: only allow it to move down (more protective)
+            if new_stop >= row["stop_loss"]:
+                return
+        else:
+            # Long stop: only allow it to move up
+            if new_stop <= row["stop_loss"]:
+                return
         # Pre-migration trades keep their original stop as the risk unit before it is overwritten.
         self.db.execute("UPDATE trades SET initial_stop=COALESCE(initial_stop, stop_loss), stop_loss=? WHERE decision_id=?",
                         (new_stop, decision_id))
