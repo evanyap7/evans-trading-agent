@@ -27,6 +27,7 @@ def verify(
     fails: list[str] = []
     m: dict[str, float] = {}
     sig, ex = limits.signal, limits.execution
+    is_short = p.is_short
 
     sec = universe.get(p.symbol)
     if sec is None:
@@ -58,25 +59,38 @@ def verify(
     if require_fresh_quote and not quote_ok:
         fails.append("no fresh quote")
 
-    # 3. Price sanity against our reference price.
+    # 3. Price sanity against our reference price (direction-aware).
     limit, stop, tp = p.entry.limit_price, p.exit.stop_loss, p.exit.take_profit
-    ref = quote.ask if quote_ok and quote else float(features["close"])
     a = float(features["atr14"])
-    m.update(reference_price=ref, atr14=a)
-    if limit > ref * (1 + ex.price_collar_pct / 100):
-        fails.append(f"limit {limit} above collar of reference {ref:.2f}")
-    if limit < ref - 2 * a:
-        fails.append(f"limit {limit} more than 2 ATR below reference {ref:.2f}")
+    if is_short:
+        # Short entry: selling, so reference is the bid; collar prevents selling too far below it.
+        ref = quote.bid if quote_ok and quote and quote.bid > 0 else float(features["close"])
+        m.update(reference_price=ref, atr14=a)
+        if limit < ref * (1 - ex.price_collar_pct / 100):
+            fails.append(f"short limit {limit} below collar of reference {ref:.2f}")
+        if limit > ref + 2 * a:
+            fails.append(f"short limit {limit} more than 2 ATR above reference {ref:.2f}")
+        stop_atr = (stop - limit) / a if a > 0 else math.nan
+        up = (limit - tp) / limit * 100     # profit on price decline
+        down = (stop - limit) / limit * 100  # loss on price rise
+    else:
+        # Long entry: buying, so reference is the ask.
+        ref = quote.ask if quote_ok and quote else float(features["close"])
+        m.update(reference_price=ref, atr14=a)
+        if limit > ref * (1 + ex.price_collar_pct / 100):
+            fails.append(f"limit {limit} above collar of reference {ref:.2f}")
+        if limit < ref - 2 * a:
+            fails.append(f"limit {limit} more than 2 ATR below reference {ref:.2f}")
+        stop_atr = (limit - stop) / a if a > 0 else math.nan
+        up = (tp - limit) / limit * 100
+        down = (limit - stop) / limit * 100
 
     # 4. Stop placement relative to volatility.
-    stop_atr = (limit - stop) / a if a > 0 else math.nan
     m["stop_atr"] = round(stop_atr, 3)
     if not (sig.min_stop_atr <= stop_atr <= sig.max_stop_atr):
         fails.append(f"stop distance {stop_atr:.2f} ATR outside [{sig.min_stop_atr}, {sig.max_stop_atr}]")
 
     # 5. Reward/risk and economic edge.
-    up = (tp - limit) / limit * 100
-    down = (limit - stop) / limit * 100
     rr = up / down
     breakeven_p = down / (up + down)  # win rate at which this stop/target pair has zero expectancy
     prob_edge = p.confidence - breakeven_p
