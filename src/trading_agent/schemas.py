@@ -150,12 +150,12 @@ class ExitPlan(Strict):
 
 
 class TradeProposal(Strict):
-    """An LLM request to open a long position. It asks for risk, not a quantity."""
+    """An LLM request to open a position (long or short). It asks for risk, not a quantity."""
 
     action: Literal["OPEN"] = "OPEN"
     symbol: str = Field(pattern=SYMBOL_PATTERN)
     instrument_type: Literal["EQUITY", "ETF"]
-    side: Literal["BUY"]
+    side: Literal["BUY", "SELL_SHORT"]
     strategy: str = Field(min_length=3, max_length=64)
     thesis: str = Field(min_length=10, max_length=1200)
     holding_period_days: int = Field(ge=1, le=40)
@@ -167,13 +167,23 @@ class TradeProposal(Strict):
     requested_risk_pct: float = Field(gt=0, le=2.5)
     evidence_ids: list[str] = Field(min_length=1)
 
+    @property
+    def is_short(self) -> bool:
+        return self.side == "SELL_SHORT"
+
     @model_validator(mode="after")
     def _prices_ordered(self) -> "TradeProposal":
         limit = self.entry.limit_price
-        if not self.exit.stop_loss < limit < self.exit.take_profit:
-            raise ValueError("long trade needs stop_loss < limit_price < take_profit")
-        if self.invalidation_price >= limit:
-            raise ValueError("invalidation_price must be below the entry limit")
+        if self.is_short:
+            if not self.exit.take_profit < limit < self.exit.stop_loss:
+                raise ValueError("short trade needs take_profit < limit_price < stop_loss")
+            if self.invalidation_price <= limit:
+                raise ValueError("invalidation_price must be above the short entry limit")
+        else:
+            if not self.exit.stop_loss < limit < self.exit.take_profit:
+                raise ValueError("long trade needs stop_loss < limit_price < take_profit")
+            if self.invalidation_price >= limit:
+                raise ValueError("invalidation_price must be below the entry limit")
         return self
 
 
@@ -227,7 +237,7 @@ class Verification(Strict):
 class SizedOrder(Strict):
     decision_id: str
     symbol: str
-    side: Literal["BUY", "SELL"]
+    side: Literal["BUY", "SELL_SHORT"]
     quantity: int
     limit_price: float
     stop_loss: float
