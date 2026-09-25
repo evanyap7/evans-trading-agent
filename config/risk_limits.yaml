@@ -16,7 +16,7 @@ account:
   max_sector_pct: 60
   max_total_exposure_pct: 100 # gross long exposure / equity (cash-only, long-only, 0% margin)
   max_risk_per_trade_pct: 2.0 # calibrated for whole-share execution on accounts under $1,500
-  max_portfolio_risk_pct: 10.0 # sum of (price - stop) * qty across open positions
+  max_portfolio_risk_pct: 6.0 # sum of (price - stop) * qty across open positions: never more than 6% at risk at once
   unknown_stop_risk_pct: 5    # assumed loss for positions with no recorded stop
   max_daily_loss_pct: 2       # whole-account equity incl. manual holdings; blocks new entries only
   max_drawdown_pct: 5
@@ -32,6 +32,12 @@ signal:
   min_reward_risk: 1.5        # strictly require positive asymmetry (at least 1.5:1, target 2:1+)
   min_stop_atr: 0.5           # stop must sit at least this many ATRs below entry
   max_stop_atr: 4.0
+  # Only take mispriced bets: confidence must beat the break-even win rate down / (up + down) by this much.
+  # A 2:1 setup breaks even at 33%, so it needs confidence of at least 41%.
+  min_probability_edge: 0.08
+  # Size from the edge: risk = kelly_fraction * (p - (1 - p) / reward_risk) of equity, still capped by
+  # requested_risk_pct and max_risk_per_trade_pct. Quarter Kelly, because the probabilities come from an LLM.
+  kelly_fraction: 0.25
 
 execution:
   max_spread_pct: 0.35

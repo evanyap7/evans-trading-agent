@@ -8,6 +8,16 @@ from .config import ExecutionLimits, RiskLimits
 from .schemas import AccountState, SizedOrder, TradeProposal
 
 
+def kelly_risk_fraction(p: float, upside: float, downside: float) -> float:
+    """Full-Kelly fraction of equity to put at risk on a win-`upside` / lose-`downside` bet won with probability p.
+
+    Losing the stop costs the risked amount; hitting the target pays reward_risk times it, so this is the
+    classic binary Kelly f* = p - (1 - p) / b. Zero or negative means no edge."""
+    if upside <= 0 or downside <= 0:
+        return 0.0
+    return p - (1 - p) / (upside / downside)
+
+
 def size_order(decision_id: str, p: TradeProposal, account: AccountState, avg_volume_20d: float,
                limits: RiskLimits) -> SizedOrder | str:
     """Return a SizedOrder, or a string explaining why no size is possible."""
@@ -17,7 +27,11 @@ def size_order(decision_id: str, p: TradeProposal, account: AccountState, avg_vo
     if per_share_risk <= 0 or account.equity <= 0:
         return "non-positive risk per share or equity"
 
-    risk_pct = min(p.requested_risk_pct, a.max_risk_per_trade_pct)
+    kelly_pct = limits.signal.kelly_fraction * kelly_risk_fraction(
+        p.confidence, p.exit.take_profit - limit, limit - stop) * 100
+    if kelly_pct <= 0:
+        return "no Kelly edge: confidence does not beat the reward/risk break-even"
+    risk_pct = min(p.requested_risk_pct, kelly_pct, a.max_risk_per_trade_pct)
     caps = {
         "risk budget": (account.equity * risk_pct / 100) / per_share_risk,
         "max position": account.equity * a.max_position_pct / 100 / limit,
@@ -45,7 +59,7 @@ def size_order(decision_id: str, p: TradeProposal, account: AccountState, avg_vo
     return SizedOrder(
         decision_id=decision_id, symbol=p.symbol, side="BUY", quantity=qty, limit_price=limit, stop_loss=stop,
         take_profit=p.exit.take_profit, notional=round(qty * limit, 2), risk_usd=round(qty * per_share_risk, 2),
-        sizing_notes=[f"binding cap: {binding}", f"risk_pct used: {risk_pct}"],
+        sizing_notes=[f"binding cap: {binding}", f"risk_pct used: {risk_pct:.3f}", f"kelly risk_pct: {kelly_pct:.3f}"],
     )
 
 
