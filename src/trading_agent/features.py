@@ -42,6 +42,7 @@ def price_features(bars: list[Bar]) -> dict[str, float]:
     sma20, sma50, sma200 = sma(20), sma(50), sma(200)
     vols = [b.volume for b in bars[-20:]]
     high_252 = max(b.high for b in bars[-252:])
+    low_252 = min(b.low for b in bars[-252:])
     return {
         "close": round(c, 4),
         "ret_5d_pct": round(ret(5), 2),
@@ -58,6 +59,7 @@ def price_features(bars: list[Bar]) -> dict[str, float]:
         "avg_volume_20d": round(fmean(vols), 0),
         "avg_dollar_volume_20d": round(fmean(vols) * c, 0),
         "dist_52w_high_pct": round(_pct(c, high_252), 2),
+        "dist_52w_low_pct": round(_pct(c, low_252), 2),
         "n_bars": float(len(bars)),
     }
 
