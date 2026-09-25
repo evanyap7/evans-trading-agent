@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
         c.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
         if name == "tick":
             c.add_argument("--continuous", action="store_true", default=None,
-                           help="Enable continuous 15-minute intraday trading")
+                           help="Enable continuous intraday scans every SCAN_INTERVAL_MINUTES")
     sub.add_parser("accounts")
     pr = sub.add_parser("probe")
     pr.add_argument("--symbol", default="SPY")
