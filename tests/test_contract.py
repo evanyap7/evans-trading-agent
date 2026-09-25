@@ -75,3 +75,32 @@ def test_news_evidence_sanitization():
 
     eid = _eid("Bloomberg", "SPY", "CPI Inflation Report")
     assert eid.startswith("doc_bloomber_spy_")
+
+
+SHORT_BASE = dict(
+    symbol="AAPL", instrument_type="EQUITY", side="SELL_SHORT", strategy="breakdown",
+    thesis="Structural weakness below 200 SMA.", holding_period_days=10, confidence=0.7,
+    expected_return_pct=3.0, invalidation_price=105,
+    entry={"order_type": "LIMIT", "limit_price": 100},
+    exit={"take_profit": 90, "stop_loss": 105, "time_stop_days": 10},
+    requested_risk_pct=0.3, evidence_ids=["px_AAPL_1"],
+)
+
+
+def test_valid_short_proposal_parses():
+    p = TradeProposal(**SHORT_BASE)
+    assert p.symbol == "AAPL"
+    assert p.is_short is True
+    assert p.exit.take_profit < p.entry.limit_price < p.exit.stop_loss
+
+
+@pytest.mark.parametrize("change", [
+    {"exit": {"take_profit": 105, "stop_loss": 95, "time_stop_days": 10}},  # long ordering on short
+    {"exit": {"take_profit": 90, "stop_loss": 99, "time_stop_days": 10}},   # stop below entry
+    {"exit": {"take_profit": 101, "stop_loss": 105, "time_stop_days": 10}}, # target above entry
+    {"invalidation_price": 95},                                             # invalidation below entry
+])
+def test_invalid_short_proposals_rejected(change):
+    with pytest.raises(ValidationError):
+        TradeProposal(**{**SHORT_BASE, **change})
+
