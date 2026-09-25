@@ -114,6 +114,8 @@ class SimulatedBroker:
                 fill_px = o.limit_price
             elif o.order_type == "STOP_LOSS" and o.side == "SELL" and q.last <= (o.stop_price or 0):
                 fill_px = q.bid
+            elif o.order_type == "STOP_LOSS" and o.side == "BUY" and q.last >= (o.stop_price or 1e18):
+                fill_px = q.ask
             elif o.order_type == "MARKET":
                 fill_px = q.ask if o.side == "BUY" else q.bid
             if fill_px is not None:
@@ -125,10 +127,10 @@ class SimulatedBroker:
         self.cash -= sign * px * o.quantity
         pos = self.positions.get(o.symbol)
         qty = (pos.quantity if pos else 0) + sign * o.quantity
-        if qty == 0:
+        if abs(qty) < 1e-9:
             self.positions.pop(o.symbol, None)
         else:
-            avg = px if not pos or sign < 0 else (pos.avg_cost * pos.quantity + px * o.quantity) / qty
+            avg = px if not pos or (pos.quantity * qty < 0) else (pos.avg_cost * abs(pos.quantity) + px * o.quantity) / abs(qty)
             self.positions[o.symbol] = Position(symbol=o.symbol, quantity=qty, avg_cost=avg,
                                                 last_price=self.quotes[o.symbol].last)
         self.orders[coid] = o.model_copy(update={"status": BrokerOrderStatus.FILLED, "filled_quantity": o.quantity,
