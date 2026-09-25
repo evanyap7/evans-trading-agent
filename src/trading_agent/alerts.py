@@ -170,10 +170,12 @@ def alert_stock_sold(
     send_telegram("\n".join(lines))
 
 
-def alert_stop_raised(symbol: str, old_stop: float | None, new_stop: float, current_price: float | None = None) -> None:
-    """Dispatched when an R-based ratcheting trailing stop moves up."""
+def alert_stop_raised(symbol: str, old_stop: float | None, new_stop: float, current_price: float | None = None, *, is_short: bool = False) -> None:
+    """Dispatched when an R-based ratcheting trailing stop moves toward profit (up for long, down for short)."""
+    header = f"📉 *Trailing Stop Lowered (Short): {symbol}*" if is_short else f"📈 *Trailing Stop Raised: {symbol}*"
+    status_msg = "• *Status*: Broker stop replaced at lower level (upside locked out)." if is_short else "• *Status*: Broker stop replaced at higher level (downside locked out)."
     lines = [
-        f"📈 *Trailing Stop Raised: {symbol}*",
+        header,
         "",
         f"• *New Protected Stop*: `${new_stop:,.2f}`",
     ]
@@ -181,7 +183,7 @@ def alert_stop_raised(symbol: str, old_stop: float | None, new_stop: float, curr
         lines.append(f"• *Previous Stop*: `${old_stop:,.2f}`")
     if current_price is not None and current_price > 0:
         lines.append(f"• *Current Price*: `${current_price:,.2f}`")
-    lines.append("• *Status*: Broker stop replaced at higher level (downside locked out).")
+    lines.append(status_msg)
     send_telegram("\n".join(lines))
 
 
@@ -195,6 +197,84 @@ def alert_trade_exited(symbol: str, qty: int, price: float, reason: str) -> None
         f"• *Exit Reason*: `{reason}`"
     )
     send_telegram(msg)
+
+
+def alert_stock_shorted(
+    symbol: str,
+    qty: float,
+    fill_price: float,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
+    thesis: str = "",
+) -> None:
+    """Dispatched immediately when a short-sell order fills at the broker."""
+    qty_str = f"{qty:g}"
+    total_val = qty * fill_price
+    lines = [
+        f"🔴 *Stock Shorted: {symbol}*",
+        "",
+        f"• *Shares Sold Short*: `{qty_str}`",
+        f"• *Execution Price*: `${fill_price:,.2f}`",
+        f"• *Total Value*: `${total_val:,.2f}`",
+    ]
+    if stop_loss is not None and stop_loss > 0:
+        upside_risk_pct = ((stop_loss - fill_price) / fill_price) * 100
+        lines.append(f"• *Protective Stop (Buy-Cover)*: `${stop_loss:,.2f}` (`{upside_risk_pct:+.1f}%`)")
+    if take_profit is not None and take_profit > 0:
+        target_pct = ((fill_price - take_profit) / fill_price) * 100
+        lines.append(f"• *Take Profit (Cover)*: `${take_profit:,.2f}` (`{target_pct:+.1f}% profit target`)")
+    if thesis:
+        clean_thesis = thesis.strip().replace("_", " ").replace("*", " ")
+        if len(clean_thesis) > 180:
+            clean_thesis = clean_thesis[:177] + "..."
+        lines.append(f"\n📝 *Thesis*: {clean_thesis}")
+    lines.append("\n🛡️ _Broker-side buy-stop armed at Webull._")
+    send_telegram("\n".join(lines))
+
+
+def alert_short_covered(
+    symbol: str,
+    qty: float,
+    fill_price: float,
+    entry_price: float | None = None,
+    reason: str = "",
+    pnl: float | None = None,
+    pnl_pct: float | None = None,
+) -> None:
+    """Dispatched immediately when a short position is covered (buy-to-cover fills)."""
+    qty_str = f"{qty:g}"
+    total_val = qty * fill_price
+    is_profit = pnl is not None and pnl >= 0
+    emoji = "🎯" if is_profit else "🛡️"
+
+    # Human-readable exit reason
+    r_lower = reason.lower()
+    if "profit" in r_lower or "target" in r_lower:
+        friendly_reason = "Take-Profit Target Hit 🎯"
+    elif "stop" in r_lower:
+        friendly_reason = "Short Stopped Out (Covered) 🛡️"
+    elif "time" in r_lower:
+        friendly_reason = "Time Horizon Limit Reached ⏱️"
+    elif "thesis" in r_lower or "rotation" in r_lower:
+        friendly_reason = "Capital Rotation / Thesis Invalidation 🔄"
+    else:
+        friendly_reason = reason or "Short Covered"
+
+    lines = [
+        f"{emoji} *Short Covered: {symbol}*",
+        "",
+        f"• *Shares Covered*: `{qty_str}`",
+        f"• *Cover Price*: `${fill_price:,.2f}`",
+        f"• *Total Cost*: `${total_val:,.2f}`",
+    ]
+    if entry_price is not None and entry_price > 0:
+        lines.append(f"• *Short Entry Price*: `${entry_price:,.2f}`")
+    if pnl is not None and pnl_pct is not None:
+        pnl_em = "🟢" if pnl >= 0 else "🔴"
+        sign = "+" if pnl >= 0 else "-"
+        lines.append(f"• *Realized P&L*: {pnl_em} `{sign}${abs(pnl):,.2f}` (`{pnl_pct:+,.2f}%`)")
+    lines.append(f"• *Reason*: `{friendly_reason}`")
+    send_telegram("\n".join(lines))
 
 
 def alert_killswitch(reason: str, engaged: bool = True) -> None:
