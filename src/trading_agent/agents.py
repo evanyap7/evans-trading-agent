@@ -15,41 +15,46 @@ from typing import Protocol
 
 from .schemas import AgentOutput, Evidence, Strict, TradeProposal
 
-SYSTEM_PROMPT = """You are the portfolio manager for an autonomous, long-only swing-trading cash account.
+SYSTEM_PROMPT = """You are the portfolio manager for an autonomous long/short swing-trading account.
 
 Objective: maximize long-run expectancy per trade, measured in R (profit divided by the initial risk to the stop).
 Profit comes from a few winners that run several R, while losers are held to about -1R. It does not come from trading often.
 There is NO daily profit target. Do not trade to hit a number. A day with no trade is a good outcome when nothing qualifies.
 
 1. WHEN TO OPEN (selective):
-   - Propose a BUY only when the setup has a clear, evidence-backed edge: trend alignment (above the 50/200-day SMAs),
-     relative strength vs the benchmark, volume confirmation, or a concrete catalyst in the evidence.
-   - Reward/risk must be at least 1.5, and preferably 2-3+. Prefer one excellent idea to several average ones.
-   - Returning no proposals with a clear `no_trade_reason` is always acceptable.
+   LONG (side BUY) — propose when the setup has a clear, evidence-backed edge: trend alignment (above the 50/200-day SMAs),
+   relative strength vs the benchmark, volume confirmation, or a concrete catalyst in the evidence.
+
+   SHORT (side SELL_SHORT) — propose only when there is clear structural breakdown: price *below* both 50- and 200-day SMAs,
+   declining relative strength versus the benchmark, a bearish catalyst, or sector rotation *away*. Shorts require a thesis
+   explaining WHY the stock should decline — not merely that it has been weak. Average-quality mean-reversion ideas do not
+   qualify as shorts.
+
+   For both directions, reward/risk must be at least 1.5, and preferably 2-3+. Prefer one excellent idea to several average ones.
+   Returning no proposals with a clear `no_trade_reason` is always acceptable.
 
 2. STRUCTURE:
-   - Long only (side BUY), from the approved universe. Entry is a LIMIT near the current price (within 0.5% of last close
-     unless targeting a pullback).
-   - `stop_loss` goes at the structural invalidation level, typically 1-3 ATR below entry: the price at which the thesis is
-     wrong. It must be outside normal daily noise (well over 0.5 ATR).
-   - `take_profit` must be grounded in resistance or ATR projections and be at least 1.5x the risk distance.
-   - `requested_risk_pct` is the percent of equity risked to the stop (maximum 2.0). The system decides share quantity.
+   - LONG (side BUY): Entry is a LIMIT near the current price (within 0.5% of last close unless targeting a pullback).
+     `stop_loss` < `limit_price` < `take_profit`. `stop_loss` at the structural invalidation, typically 1-3 ATR below entry.
+     `invalidation_price` below entry.
+   - SHORT (side SELL_SHORT): Entry is a LIMIT near the current price.
+     `take_profit` < `limit_price` < `stop_loss`. `stop_loss` is the BUY cover price if the thesis is wrong (above entry).
+     `take_profit` is the cover price when the thesis plays out (below entry). `invalidation_price` above entry.
+     Distance from entry to stop should be 1-3 ATR, same as longs.
 
 3. MANAGING OPEN POSITIONS (the system does most of this):
-   - Every position has a broker-side stop. The system also trails that stop automatically: to breakeven at +1R, then
-     1.5R behind price from +2R. It exits at the take-profit or the time stop. Do NOT close winners early to "bank" gains;
-     the trailing stop already protects them. Do NOT cut a loser before its stop because of ordinary noise.
-   - Propose a CLOSE only when the thesis is invalidated by new evidence (e.g. a decisive break of the structure the
-     trade relied on, or a material negative catalyst), or when you are rotating into a clearly superior setup and the
-     position has stalled for most of its planned holding period. Cite the position evidence (`pos_<SYMBOL>_*`) and
-     price evidence in `evidence_ids`, and state the invalidation in the thesis.
+   - Every position has a broker-side stop. The system trails that stop automatically toward profit.
+   - Do NOT close winners early to "bank" gains; the trailing stop already protects them.
+   - Do NOT cut a position before its stop because of ordinary noise.
+   - Propose a CLOSE only when the thesis is invalidated by new evidence, or when rotating into a clearly superior setup.
+     Cite the position evidence (`pos_<SYMBOL>_*`) and price evidence in `evidence_ids`.
 
 4. CASH (whole shares only):
-   - The account buys whole shares; the minimum is 1 share. `limit_price` must be <= available cash plus the proceeds
-     of any CLOSE you propose in the same cycle. Use the prices in the evidence, never remembered prices.
+   - The account buys whole shares; the minimum is 1 share. Entry prices must reflect available cash.
+   - Use the prices in the evidence, never remembered prices.
 
 5. NO DUPLICATE POSITIONS:
-   - Never propose a BUY for a symbol already in 'Open positions'; the risk engine rejects it.
+   - Never propose a BUY or SELL_SHORT for a symbol already in 'Open positions'; the risk engine rejects it.
 
 6. CALIBRATION AND GROUNDING:
    - `confidence` is your honest probability that the take-profit is reached before the stop. Most swing setups are
@@ -104,14 +109,17 @@ def render_context(ctx: AgentContext) -> str:
     return "\n\n".join(parts)
 
 
-SCREENER_SYSTEM_PROMPT = """You are a quantitative screener for a long-only swing-trading cash account.
+SCREENER_SYSTEM_PROMPT = """You are a quantitative screener for a long/short swing-trading account.
 Objective: shortlist only setups with a real edge. Expectancy per trade matters, not trade count. There is no daily
 profit target, and an empty shortlist is a valid answer.
 1. Never shortlist symbols that are already held; the risk engine rejects duplicate exposure.
-2. Only shortlist symbols whose close is <= the account cash, so a 1-share buy is possible.
-3. Prefer liquid leaders in a confirmed uptrend: above the 50- and 200-day SMAs, strong relative strength vs the
-   benchmark, and orderly volatility. Avoid low-quality spikes and names in a downtrend.
-4. Shortlist at most 5, fewer if few qualify. Set is_risk_on=false when the broad market regime is weak.
+2. Only shortlist symbols whose close is <= the account cash, so a 1-share position is possible.
+3. LONG candidates: prefer liquid leaders in a confirmed uptrend — above the 50- and 200-day SMAs, strong relative
+   strength vs the benchmark, and orderly volatility. Avoid low-quality spikes.
+4. SHORT candidates: look for names *below* both 50- and 200-day SMAs with weakening momentum, declining relative
+   strength, and orderly (not spiking) downtrends. Avoid trying to short parabolic moves or low-float squeezes.
+5. Shortlist at most 5 (combined long + short), fewer if few qualify. Set is_risk_on=false when broad market regime is weak.
+6. Label each candidate clearly as a LONG or SHORT opportunity in screening_notes.
 """
 
 
@@ -259,7 +267,8 @@ class TieredResearchAgent:
 
 
 class BaselineMomentumAgent:
-    """Trend-following control: strongest 60-day movers above their 50/200-day averages."""
+    """Trend-following control: strongest 60-day movers above their 50/200-day averages (long),
+    plus weakest movers below both averages (short)."""
 
     name = "baseline"
     model = "baseline-momentum-v1"
@@ -273,14 +282,25 @@ class BaselineMomentumAgent:
             return AgentOutput(market_view="benchmark below 200-day average", no_trade_reason="risk-off regime")
         held = {p["symbol"] for p in ctx.positions}
         px_ev = {e.symbol: e for e in ctx.evidence if e.kind == "price_features"}
-        candidates = []
+        # Long candidates: above both SMAs, sorted by 60d momentum descending
+        long_candidates = []
+        # Short candidates: below both SMAs, sorted by 60d momentum ascending (most negative first)
+        short_candidates = []
         for sym, f in ctx.features.items():
             if sym in held or sym not in ctx.universe or sym not in px_ev:
                 continue
-            if (f.get("dist_sma200_pct") or -1) > 0 and (f.get("dist_sma50_pct") or -1) > 0 and f.get("ret_60d_pct"):
-                candidates.append((f["ret_60d_pct"], sym))
+            dist200 = f.get("dist_sma200_pct") or -1
+            dist50 = f.get("dist_sma50_pct") or -1
+            ret60 = f.get("ret_60d_pct")
+            if ret60 is None:
+                continue
+            if dist200 > 0 and dist50 > 0:
+                long_candidates.append((ret60, sym))
+            elif dist200 < 0 and dist50 < 0:
+                short_candidates.append((ret60, sym))
         proposals = []
-        for _, sym in sorted(candidates, reverse=True)[: self.max_ideas]:
+        # Long proposals
+        for _, sym in sorted(long_candidates, reverse=True)[: self.max_ideas]:
             f = ctx.features[sym]
             close, a = f["close"], f["atr14"]
             limit = round(close * 1.002, 2)
@@ -290,6 +310,26 @@ class BaselineMomentumAgent:
             proposals.append(TradeProposal(
                 symbol=sym, instrument_type=ctx.universe[sym]["type"], side="BUY", strategy="momentum_trend",
                 thesis=f"{sym} is among the strongest 60-day performers and trades above its 50 and 200-day averages.",
+                holding_period_days=15, confidence=conf, expected_return_pct=round(conf * up - (1 - conf) * down, 2),
+                invalidation_price=stop, entry={"order_type": "LIMIT", "limit_price": limit},
+                exit={"take_profit": tp, "stop_loss": stop, "time_stop_days": 15}, requested_risk_pct=0.25,
+                evidence_ids=[px_ev[sym].evidence_id, regime.evidence_id],
+            ))
+        # Short proposals
+        for _, sym in sorted(short_candidates)[: max(1, self.max_ideas // 2)]:
+            f = ctx.features[sym]
+            close, a = f["close"], f["atr14"]
+            limit = round(close * 0.998, 2)
+            stop = round(limit + 2 * a, 2)   # stop above entry
+            tp = round(limit - 4 * a, 2)      # target below entry
+            if tp <= 0:
+                continue
+            up = (limit - tp) / limit * 100     # profit on decline
+            down = (stop - limit) / limit * 100  # loss on rise
+            conf = 0.55
+            proposals.append(TradeProposal(
+                symbol=sym, instrument_type=ctx.universe[sym]["type"], side="SELL_SHORT", strategy="momentum_breakdown",
+                thesis=f"{sym} is among the weakest 60-day performers and trades below its 50 and 200-day averages.",
                 holding_period_days=15, confidence=conf, expected_return_pct=round(conf * up - (1 - conf) * down, 2),
                 invalidation_price=stop, entry={"order_type": "LIMIT", "limit_price": limit},
                 exit={"take_profit": tp, "stop_loss": stop, "time_stop_days": 15}, requested_risk_pct=0.25,
