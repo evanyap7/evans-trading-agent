@@ -116,6 +116,35 @@ def test_alert_helpers(mock_send):
     alert_killswitch("", engaged=False)
     assert "Kill Switch Released" in mock_send.call_args[0][0]
 
+    # Short alerts
+    from trading_agent.alerts import alert_short_covered, alert_stock_shorted
+
+    mock_send.reset_mock()
+    alert_stock_shorted("TSLA", 5, 200.0, stop_loss=210.0, take_profit=180.0, thesis="Structural breakdown")
+    msg = mock_send.call_args[0][0]
+    assert "Stock Shorted: TSLA" in msg
+    assert "200.00" in msg
+    assert "210.00" in msg
+    assert "180.00" in msg
+    assert "Structural breakdown" in msg
+
+    mock_send.reset_mock()
+    alert_short_covered("TSLA", 5, 180.0, entry_price=200.0, reason="take_profit", pnl=100.0, pnl_pct=10.0)
+    msg = mock_send.call_args[0][0]
+    assert "Short Covered: TSLA" in msg
+    assert "180.00" in msg
+    assert "+$100.00" in msg
+    assert "+10.00%" in msg
+    assert "Take-Profit Target Hit" in msg
+
+    mock_send.reset_mock()
+    alert_stop_raised("TSLA", old_stop=210.0, new_stop=200.0, current_price=190.0, is_short=True)
+    msg = mock_send.call_args[0][0]
+    assert "Trailing Stop Lowered (Short): TSLA" in msg
+    assert "200.00" in msg
+    assert "lower level" in msg
+
+
 
 def test_daily_morning_briefing():
     from trading_agent.schemas import AccountState, Position
