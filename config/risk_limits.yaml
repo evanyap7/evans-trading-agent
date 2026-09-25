@@ -4,7 +4,7 @@
 live_trading:
   enabled: true               # real orders need: this true + WEBULL_ENVIRONMENT=prod + TRADING_MODE=broker
   allowed_instruments: [EQUITY, ETF]
-  permit_shorting: false
+  permit_shorting: false       # flip to true after shadow-mode validation of short pipeline
   permit_margin: false
   permit_options: false
   # true: the agent may also sell holdings you bought by hand (capital rotation). Exits still need
@@ -12,11 +12,11 @@ live_trading:
   agent_may_close_manual_positions: true
 
 account:
-  max_position_pct: 35        # of equity per symbol; limits single-name gap risk past the stop
+  max_position_pct: 35        # of equity per symbol (long or short); limits single-name gap risk past the stop
   max_sector_pct: 60
-  max_total_exposure_pct: 100 # gross long exposure / equity (cash-only, long-only, 0% margin)
+  max_total_exposure_pct: 100 # gross long exposure / equity
   max_risk_per_trade_pct: 2.0 # calibrated for whole-share execution on accounts under $1,500
-  max_portfolio_risk_pct: 6.0 # sum of (price - stop) * qty across open positions: never more than 6% at risk at once
+  max_portfolio_risk_pct: 6.0 # sum of per-trade risk across open positions: never more than 6% at risk at once
   unknown_stop_risk_pct: 5    # assumed loss for positions with no recorded stop
   max_daily_loss_pct: 2       # whole-account equity incl. manual holdings; blocks new entries only
   max_drawdown_pct: 5
@@ -24,13 +24,16 @@ account:
   max_order_value_usd: 1000   # allows buying whole shares of large-cap leaders
   max_adv_participation_pct: 2
   daily_profit_target_usd: 10.0 # reporting benchmark only; it never triggers an exit or reaches the LLM
+  # Short-selling exposure caps — only evaluated when permit_shorting is on
+  max_short_exposure_pct: 30  # never more than 30% of equity sold short
+  max_gross_exposure_pct: 130 # long + |short| capped at 130% of equity
 
 signal:
   min_confidence: 0.50
   min_net_edge_pct: 0.3       # expected return after costs and safety buffer
   safety_buffer_pct: 0.20
   min_reward_risk: 1.5        # strictly require positive asymmetry (at least 1.5:1, target 2:1+)
-  min_stop_atr: 0.5           # stop must sit at least this many ATRs below entry
+  min_stop_atr: 0.5           # stop must sit at least this many ATRs from entry (both directions)
   max_stop_atr: 4.0
   # Only take mispriced bets: confidence must beat the break-even win rate down / (up + down) by this much.
   # A 2:1 setup breaks even at 33%, so it needs confidence of at least 41%.
@@ -44,14 +47,14 @@ execution:
   max_quote_age_seconds: 60   # during market hours
   max_bar_age_days: 5         # latest daily bar must be this recent (calendar days)
   max_account_age_seconds: 120
-  price_collar_pct: 0.5       # BUY limit may not exceed the ask by more than this
+  price_collar_pct: 0.5       # limit may not exceed the ask (long) or go below the bid (short) by more than this
   slippage_bps: 5             # per side, used in cost estimates
   fee_per_order_usd: 0        # Webull SG commission + platform fee
-  broker_side_stops: true     # place a GTC STOP_LOSS at the broker once an entry fills (re-armed if missing)
+  broker_side_stops: true     # place a GTC stop at the broker once an entry fills (re-armed if missing)
   min_price_usd: 5            # no new entries below this share price (penny-stock guard)
   min_avg_dollar_volume_usd: 20000000  # 20-day average dollar volume required for new entries
-  max_exit_attempts_per_day: 3         # sell retries per trade per day if the broker rejects an exit
-  # Ratcheting stop in multiples of initial risk R (entry - initial stop). Only ever moves up.
+  max_exit_attempts_per_day: 3         # exit retries per trade per day if the broker rejects
+  # Ratcheting stop in multiples of initial risk R. Moves toward profit only (up for longs, down for shorts).
   trailing_stops: true
   trail_breakeven_r: 1.0      # at +1R the stop moves to entry: a winner can no longer become a loser
   trail_start_r: 2.0          # from +2R the stop trails the last price...
@@ -61,5 +64,5 @@ execution:
 events:
   earnings_blackout_days: 2
   # Dates come from Webull's earnings calendar each cycle (config/events.yaml overrides).
-  # Fail closed: a stock with no known date gets no new entries.
+  # Fail closed: a stock with no known date gets no new entries (long or short — squeeze risk on shorts).
   require_earnings_data_for_stocks: true

@@ -34,9 +34,9 @@ class LiveTradingLimits(Frozen):
 
     @model_validator(mode="after")
     def _unsupported_permissions_off(self) -> "LiveTradingLimits":
-        # The code has no short, margin or options handling; turning these on would silently do nothing safe.
-        if self.permit_shorting or self.permit_margin or self.permit_options:
-            raise ValueError("permit_shorting/permit_margin/permit_options are not supported and must stay false")
+        # Margin and options are not implemented; turning these on would silently do nothing safe.
+        if self.permit_margin or self.permit_options:
+            raise ValueError("permit_margin/permit_options are not supported and must stay false")
         if not set(self.allowed_instruments) <= {"EQUITY", "ETF"}:
             raise ValueError("allowed_instruments may only contain EQUITY and ETF")
         return self
@@ -56,6 +56,9 @@ class AccountLimits(Frozen):
     max_order_value_usd: float = Field(gt=0)
     max_adv_participation_pct: float = Field(gt=0, le=5)
     daily_profit_target_usd: float = Field(default=10.0, ge=0)  # reporting only; never drives exits
+    # Short-selling exposure caps — only evaluated when permit_shorting is on
+    max_short_exposure_pct: float = Field(default=30, gt=0, le=100)  # gross short / equity
+    max_gross_exposure_pct: float = Field(default=130, gt=0, le=200)  # (long + |short|) / equity
 
 
 class SignalLimits(Frozen):
