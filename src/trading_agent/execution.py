@@ -140,34 +140,54 @@ class ExecutionEngine:
             if pa is None:
                 return
             prop = Proposal.model_validate_json(pa["proposal"]).trade
+            is_short = prop.is_short
             today = to_trading_date(utcnow())
             self.ledger.open_trade(decision_id, row["symbol"], qty, px, prop.exit.stop_loss, prop.exit.take_profit,
-                                   add_trading_days(today, prop.exit.time_stop_days))
+                                   add_trading_days(today, prop.exit.time_stop_days),
+                                   side=prop.side)
             if self.limits.execution.broker_side_stops:
-                self.ensure_protective_stop(decision_id, row["symbol"], int(qty), prop.exit.stop_loss)
+                self.ensure_protective_stop(decision_id, row["symbol"], int(qty), prop.exit.stop_loss,
+                                            is_short=is_short)
             try:
-                from .alerts import alert_stock_bought
-                alert_stock_bought(
-                    symbol=row["symbol"],
-                    qty=qty,
-                    fill_price=px,
-                    stop_loss=prop.exit.stop_loss,
-                    take_profit=prop.exit.take_profit,
-                    thesis=getattr(prop, "thesis", "") or "",
-                )
+                if is_short:
+                    from .alerts import alert_stock_shorted
+                    alert_stock_shorted(
+                        symbol=row["symbol"],
+                        qty=qty,
+                        fill_price=px,
+                        stop_loss=prop.exit.stop_loss,
+                        take_profit=prop.exit.take_profit,
+                        thesis=getattr(prop, "thesis", "") or "",
+                    )
+                else:
+                    from .alerts import alert_stock_bought
+                    alert_stock_bought(
+                        symbol=row["symbol"],
+                        qty=qty,
+                        fill_price=px,
+                        stop_loss=prop.exit.stop_loss,
+                        take_profit=prop.exit.take_profit,
+                        thesis=getattr(prop, "thesis", "") or "",
+                    )
             except Exception:
                 pass
-        elif row["purpose"].startswith("STOP") or row["purpose"] == "EXIT" or row["side"] == "SELL":
+        elif row["purpose"].startswith("STOP") or row["purpose"] == "EXIT" or row["side"] in ("SELL", "BUY"):
             trade = next((t for t in self.ledger.open_trades() if t["decision_id"] == decision_id), None)
             if trade is None:
                 trade = self.ledger.db.execute("SELECT * FROM trades WHERE decision_id=?", (decision_id,)).fetchone()
 
             entry_px = trade["entry_price"] if trade and "entry_price" in trade.keys() else None
+            trade_side = trade["side"] if trade and "side" in trade.keys() else "BUY"
+            is_short_trade = trade_side == "SELL_SHORT"
             pnl = None
             pnl_pct = None
             if entry_px is not None and entry_px > 0:
-                pnl = (px - entry_px) * qty
-                pnl_pct = ((px - entry_px) / entry_px) * 100
+                if is_short_trade:
+                    pnl = (entry_px - px) * qty    # short P&L: profit when price falls
+                    pnl_pct = ((entry_px - px) / entry_px) * 100
+                else:
+                    pnl = (px - entry_px) * qty
+                    pnl_pct = ((px - entry_px) / entry_px) * 100
 
             exit_reason = "stop_loss" if row["purpose"].startswith("STOP") else "target_or_thesis_exit"
             if row["purpose"] == "EXIT":
@@ -193,16 +213,28 @@ class ExecutionEngine:
                     self.ledger.close_trade(decision_id, "stop_filled" if row["purpose"].startswith("STOP") else "exit_filled")
 
             try:
-                from .alerts import alert_stock_sold
-                alert_stock_sold(
-                    symbol=row["symbol"],
-                    qty=qty,
-                    fill_price=px,
-                    entry_price=entry_px,
-                    reason=exit_reason,
-                    pnl=pnl,
-                    pnl_pct=pnl_pct,
-                )
+                if is_short_trade:
+                    from .alerts import alert_short_covered
+                    alert_short_covered(
+                        symbol=row["symbol"],
+                        qty=qty,
+                        fill_price=px,
+                        entry_price=entry_px,
+                        reason=exit_reason,
+                        pnl=pnl,
+                        pnl_pct=pnl_pct,
+                    )
+                else:
+                    from .alerts import alert_stock_sold
+                    alert_stock_sold(
+                        symbol=row["symbol"],
+                        qty=qty,
+                        fill_price=px,
+                        entry_price=entry_px,
+                        reason=exit_reason,
+                        pnl=pnl,
+                        pnl_pct=pnl_pct,
+                    )
             except Exception:
                 pass
 
@@ -219,10 +251,13 @@ class ExecutionEngine:
         rows = self.stop_orders(decision_id)
         return rows[-1] if rows else None
 
-    def place_protective_stop(self, decision_id: str, symbol: str, qty: int, stop: float) -> OrderState:
+    def place_protective_stop(self, decision_id: str, symbol: str, qty: int, stop: float,
+                              *, is_short: bool = False) -> OrderState:
         n = len(self.stop_orders(decision_id))
         purpose_key = "STOP" if n == 0 else f"STOP:{n + 1}"  # first stop keeps its historical id
-        req = OrderRequest(client_order_id=client_order_id(decision_id, purpose_key), symbol=symbol, side="SELL",
+        # For shorts the protective stop is a BUY order above the market (buy-to-cover if squeezed).
+        stop_side = "BUY" if is_short else "SELL"
+        req = OrderRequest(client_order_id=client_order_id(decision_id, purpose_key), symbol=symbol, side=stop_side,
                            order_type="STOP_LOSS", quantity=qty, time_in_force="GTC", stop_price=round(stop, 2))
         state = self.submit(req, decision_id, "STOP")
         if state not in (OrderState.ACKNOWLEDGED, OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.SHADOW):
@@ -235,7 +270,8 @@ class ExecutionEngine:
                 pass
         return state
 
-    def ensure_protective_stop(self, decision_id: str, symbol: str, qty: int, stop: float) -> OrderState | None:
+    def ensure_protective_stop(self, decision_id: str, symbol: str, qty: int, stop: float,
+                               *, is_short: bool = False) -> OrderState | None:
         """Place a broker-side stop if the trade has none working. Bounded so a broker that keeps
         rejecting cannot turn this into an order storm."""
         if qty < 1:
@@ -246,10 +282,10 @@ class ExecutionEngine:
             if state not in (OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED):
                 return state  # working, pending, unknown (being reconciled), filled or shadow
         if self._live_exit(decision_id):
-            return None  # a sell is already working for these shares; a second one could oversell
+            return None  # an exit is already working for these shares; a second one could over-exit
         if len(self.stop_orders(decision_id)) >= self.MAX_STOP_ORDERS_PER_TRADE:
             return None
-        return self.place_protective_stop(decision_id, symbol, qty, stop)
+        return self.place_protective_stop(decision_id, symbol, qty, stop, is_short=is_short)
 
     def raise_protective_stop(self, decision_id: str, symbol: str, qty: int, new_stop: float, current_price: float | None = None) -> str:
         """Ratchet a trade's stop up: record it, then replace the broker-side stop.
@@ -286,14 +322,16 @@ class ExecutionEngine:
                 return "deferred: cancel not confirmed"
         elif row is not None and OrderState(row["state"]) == OrderState.FILLED:
             return "skipped: old stop filled"
+        is_short = (trade["side"] if trade and "side" in trade.keys() else "BUY") == "SELL_SHORT"
         self.ledger.raise_stop(decision_id, new_stop)
-        res_state = self.place_protective_stop(decision_id, symbol, qty, new_stop)
+        res_state = self.place_protective_stop(decision_id, symbol, qty, new_stop, is_short=is_short)
         try:
             from .alerts import alert_stop_raised
-            alert_stop_raised(symbol, old_stop, new_stop, current_price=current_price)
+            alert_stop_raised(symbol, old_stop, new_stop, current_price=current_price, is_short=is_short)
         except Exception:
             pass
-        return f"raised ({res_state.value})"
+        action = "lowered" if is_short else "raised"
+        return f"{action} ({res_state.value})"
 
     def _live_exit(self, decision_id: str) -> bool:
         terminal = [st.value for st in TERMINAL_STATES]
@@ -319,14 +357,16 @@ class ExecutionEngine:
                 return coid, row
         return None, None
 
-    def exit_trade(self, decision_id: str, symbol: str, qty: int, ref_price: float, reason: str, today: date) -> OrderState:
-        """Cancel the protective stop, then sell with a marketable limit.
+    def exit_trade(self, decision_id: str, symbol: str, qty: int, ref_price: float, reason: str, today: date,
+                   *, is_short: bool = False) -> OrderState:
+        """Cancel the protective stop, then close the position with a marketable limit.
 
+        For longs this is a SELL; for shorts this is a BUY (buy-to-cover).
         A few attempts per trading day are allowed; the stop is only touched when an attempt will
-        actually be made, and `ensure_protective_stop` re-arms it if the sell does not go through."""
+        actually be made, and `ensure_protective_stop` re-arms it if the exit does not go through."""
         if qty < 1 or ref_price <= 0:
             self.ledger.append("exit_skipped", {"reason": reason, "qty": qty, "ref_price": ref_price,
-                                                "why": "no sellable quantity or no usable price"}, decision_id=decision_id)
+                                                "why": "no closable quantity or no usable price"}, decision_id=decision_id)
             return OrderState.REJECTED
         coid, existing = self._exit_slot(decision_id, today)
         if existing is not None:
@@ -346,8 +386,16 @@ class ExecutionEngine:
                 return state
         elif stop_row is not None and OrderState(stop_row["state"]) == OrderState.FILLED:
             return OrderState.FILLED
-        limit = round(ref_price * (1 - self.limits.execution.price_collar_pct / 100), 2)
-        req = OrderRequest(client_order_id=coid, symbol=symbol, side="SELL", order_type="LIMIT", quantity=qty,
+        if is_short:
+            # Cover a short: BUY with limit slightly above reference (pay up to cover)
+            limit = round(ref_price * (1 + self.limits.execution.price_collar_pct / 100), 2)
+            exit_side = "BUY"
+        else:
+            # Sell a long: SELL with limit slightly below reference
+            limit = round(ref_price * (1 - self.limits.execution.price_collar_pct / 100), 2)
+            exit_side = "SELL"
+        req = OrderRequest(client_order_id=coid, symbol=symbol, side=exit_side, order_type="LIMIT", quantity=qty,
                            time_in_force="DAY", limit_price=limit)
-        self.ledger.append("exit_requested", {"reason": reason, "limit": limit}, decision_id=decision_id)
+        self.ledger.append("exit_requested", {"reason": reason, "limit": limit, "side": exit_side},
+                           decision_id=decision_id)
         return self.submit(req, decision_id, "EXIT")
