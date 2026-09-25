@@ -65,6 +65,11 @@ class SignalLimits(Frozen):
     min_reward_risk: float = Field(ge=1)
     min_stop_atr: float = Field(gt=0)
     max_stop_atr: float = Field(gt=0)
+    # confidence minus the break-even win rate down / (up + down); the stock version of "mispriced by more than 8%"
+    min_probability_edge: float = Field(default=0.08, ge=0, le=1)
+    # Fraction of the full Kelly bet used for sizing. LLM probabilities are noisy, and full Kelly on an
+    # overestimated edge overbets badly, so this stays well below 1.
+    kelly_fraction: float = Field(default=0.25, gt=0, le=1)
 
 
 class ExecutionLimits(Frozen):
@@ -142,6 +147,7 @@ class Settings(Frozen):
     llm_model: str = "claude-opus-5-5"
     llm_model_fast: str = "claude-haiku-4-5"
     continuous_trading: bool = False
+    scan_interval_minutes: int = Field(default=10, ge=5, le=60)
 
     @property
     def is_production(self) -> bool:
@@ -193,4 +199,5 @@ def load_settings() -> Settings:
         llm_model=os.environ.get("LLM_MODEL", "claude-opus-5-5"),
         llm_model_fast=os.environ.get("LLM_MODEL_FAST", "claude-haiku-4-5"),
         continuous_trading=os.environ.get("CONTINUOUS_TRADING", "true").lower() in ("1", "true", "yes"),
+        scan_interval_minutes=int(os.environ.get("SCAN_INTERVAL_MINUTES", "10")),
     )
