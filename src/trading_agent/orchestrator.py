@@ -427,9 +427,10 @@ class Orchestrator:
             elif local >= EXECUTE_AFTER and self._claim_cycle("execute", td):
                 reports.append(self._guarded("execute", self.execute))
 
-            # Continuous intraday trading: every 15 minutes during regular hours
+            # Continuous intraday trading: a fresh scan every scan_interval_minutes during regular hours
             if self.continuous_trading:
-                intraday_slot = f"{td.isoformat()}:{local.hour}:{local.minute // 15}"
+                interval = self.settings.scan_interval_minutes
+                intraday_slot = f"{td.isoformat()}:{local.hour}:{local.minute // interval}"
                 if local >= EXECUTE_AFTER and self._claim_cycle("intraday_trade", intraday_slot):
                     reports.append(self._guarded("research", self.research))
                     if self.ledger.pending():
