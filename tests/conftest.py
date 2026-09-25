@@ -78,6 +78,22 @@ def good_proposal(ctx: AgentContext, symbol: str = "XLK", **overrides) -> TradeP
     return TradeProposal(**data)
 
 
+def good_short_proposal(ctx: AgentContext, symbol: str = "XLK", **overrides) -> TradeProposal:
+    f = ctx.features[symbol]
+    px_id = next(e.evidence_id for e in ctx.evidence if e.kind == "price_features" and e.symbol == symbol)
+    close, a = f["close"], f["atr14"]
+    limit = round(close * 0.999, 2)
+    data = dict(
+        symbol=symbol, instrument_type="ETF", side="SELL_SHORT", strategy="breakdown", thesis="Structural breakdown below averages.",
+        holding_period_days=10, confidence=0.6, expected_return_pct=2.0, invalidation_price=round(limit + 2 * a, 2),
+        entry={"order_type": "LIMIT", "limit_price": limit},
+        exit={"take_profit": round(limit - 4 * a, 2), "stop_loss": round(limit + 2 * a, 2), "time_stop_days": 10},
+        requested_risk_pct=0.25, evidence_ids=[px_id],
+    )
+    data.update(overrides)
+    return TradeProposal(**data)
+
+
 def make_orchestrator(tmp_path, broker, agent, now, mode=TradingMode.BROKER, env="uat", limits=None, events=None, enable_news=False, continuous_trading=None):
     return Orchestrator(settings=make_settings(tmp_path, mode, env), limits=limits or load_risk_limits(),
                         universe=load_universe(), events=events or Events(), broker=broker,

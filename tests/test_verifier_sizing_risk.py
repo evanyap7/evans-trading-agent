@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from conftest import IN_SESSION, good_proposal, seeded_broker
+from conftest import IN_SESSION, good_proposal, good_short_proposal, seeded_broker
 from trading_agent.agents import AgentContext
 from trading_agent.config import Events
 from trading_agent.features import build_evidence
@@ -170,3 +170,86 @@ def test_sizing_refuses_without_kelly_edge(setup, limits):
     s = size_order("d1", good_proposal(ctx, confidence=0.30, expected_return_pct=-0.1), b.get_account(),
                    feats["XLK"]["avg_volume_20d"], limits)
     assert isinstance(s, str) and "Kelly" in s
+
+
+# -- Short-position verifier, sizing, and risk tests ----------------------------
+
+def test_good_short_proposal_verifies(setup, limits, universe):
+    b, ctx, cyc, feats = setup
+    p = good_short_proposal(ctx)
+    v = run_verify(p, cyc, feats, b, limits, universe)
+    assert v.passed, v.failures
+    assert v.metrics["reward_risk"] >= limits.signal.min_reward_risk
+
+
+def test_short_sizing_direction_aware(setup, limits):
+    b, ctx, _, feats = setup
+    acct = b.get_account()
+    p = good_short_proposal(ctx, requested_risk_pct=1.0)
+    s = size_order("d_short", p, acct, feats["XLK"]["avg_volume_20d"], limits)
+    assert not isinstance(s, str)
+    assert s.side == "SELL_SHORT"
+    assert s.notional <= limits.account.max_order_value_usd
+    assert s.risk_usd / acct.equity * 100 <= limits.account.max_risk_per_trade_pct + 1e-9
+
+
+def test_short_blocked_when_permit_shorting_is_false(setup, limits, universe):
+    b, ctx, _, feats = setup
+    # Default limits has permit_shorting: false
+    off_limits = limits.model_copy(update={"live_trading": limits.live_trading.model_copy(update={"permit_shorting": False})})
+    p = good_short_proposal(ctx)
+    s = size_order("d_short", p, b.get_account(), feats["XLK"]["avg_volume_20d"], off_limits)
+    d = evaluate(s, "ETF", 10, _ctx(b), off_limits, universe, Events())
+    assert not d.approved
+    assert "long_only" in d.failed_checks
+
+
+def test_short_approved_when_permit_shorting_is_true(setup, limits, universe):
+    b, ctx, _, feats = setup
+    on_limits = limits.model_copy(update={"live_trading": limits.live_trading.model_copy(update={"permit_shorting": True})})
+    p = good_short_proposal(ctx)
+    s = size_order("d_short", p, b.get_account(), feats["XLK"]["avg_volume_20d"], on_limits)
+    d = evaluate(s, "ETF", 10, _ctx(b), on_limits, universe, Events())
+    assert d.approved, d.failed_checks
+
+
+def test_risk_short_exposure_cap(setup, limits, universe):
+    b, ctx, _, feats = setup
+    on_limits = limits.model_copy(update={"live_trading": limits.live_trading.model_copy(update={"permit_shorting": True})})
+    p = good_short_proposal(ctx)
+    s = size_order("d_short", p, b.get_account(), feats["XLK"]["avg_volume_20d"], on_limits)
+
+    # Put 30.5% short exposure already in place: max_short_exposure_pct is 30%
+    acct = b.get_account()
+    existing_short_notional = acct.equity * 0.305
+    open_risks = [OpenRisk("SPY", -existing_short_notional / 400, 400, 410)]
+    ctx_risk = _ctx(b, open_risks=open_risks)
+
+    # Sized order notional pushes short exposure over 30%
+    d = evaluate(s, "ETF", 10, ctx_risk, on_limits, universe, Events())
+    assert not d.approved
+    assert "short_exposure_ok" in d.failed_checks
+
+
+def test_risk_gross_exposure_cap(setup, limits, universe):
+    b, ctx, _, feats = setup
+    on_limits = limits.model_copy(update={"live_trading": limits.live_trading.model_copy(update={"permit_shorting": True})})
+    p = good_short_proposal(ctx)
+    s = size_order("d_short", p, b.get_account(), feats["XLK"]["avg_volume_20d"], on_limits)
+
+    # Put 95% long exposure and 25% short exposure -> 120% gross: max_gross_exposure_pct is 130%
+    acct = b.get_account()
+    open_risks = [
+        OpenRisk("SPY", (acct.equity * 0.95) / 400, 400, 390),
+        OpenRisk("QQQ", -(acct.equity * 0.25) / 300, 300, 310),
+    ]
+    # Adding order.notional pushes it over 130% if order.notional is > 10% equity
+    # Let's set max_gross_exposure_pct lower, e.g. 120%
+    tight_limits = on_limits.model_copy(update={
+        "account": on_limits.account.model_copy(update={"max_gross_exposure_pct": 120})
+    })
+    ctx_risk = _ctx(b, open_risks=open_risks)
+    d = evaluate(s, "ETF", 10, ctx_risk, tight_limits, universe, Events())
+    assert not d.approved
+    assert "gross_exposure_ok" in d.failed_checks
+

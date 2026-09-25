@@ -17,10 +17,13 @@ from .schemas import AccountState, Quote, RiskDecision, SizedOrder
 
 @dataclass
 class OpenRisk:
-    """A position or working entry order and the stop that bounds its loss."""
+    """A position or working entry order and the stop that bounds its loss.
+
+    For shorts, `quantity` is negative and `stop` is above `price`.
+    """
 
     symbol: str
-    quantity: float
+    quantity: float  # positive for long, negative for short
     price: float
     stop: float | None
 
@@ -47,6 +50,7 @@ def evaluate(order: SizedOrder, instrument_type: str, holding_period_days: int, 
     a, ex, lt = limits.account, limits.execution, limits.live_trading
     eq = ctx.account.equity
     sec = universe.get(order.symbol)
+    is_short = order.side == "SELL_SHORT"
     checks: dict[str, bool] = {}
 
     checks["kill_switch_off"] = not ctx.kill_switch_engaged
@@ -65,21 +69,41 @@ def evaluate(order: SizedOrder, instrument_type: str, holding_period_days: int, 
         checks["market_session_open"] = is_regular_session(ctx.now)
         checks["quote_fresh"] = q is not None and q.age_seconds(ctx.now) <= ex.max_quote_age_seconds
         checks["spread_ok"] = q is not None and math.isfinite(q.spread_pct) and q.spread_pct <= ex.max_spread_pct
-        checks["price_collar"] = q is not None and q.ask > 0 and order.limit_price <= q.ask * (1 + ex.price_collar_pct / 100)
+        if is_short:
+            # Short: collar vs bid (selling into the bid)
+            checks["price_collar"] = q is not None and q.bid > 0 and order.limit_price >= q.bid * (1 - ex.price_collar_pct / 100)
+        else:
+            checks["price_collar"] = q is not None and q.ask > 0 and order.limit_price <= q.ask * (1 + ex.price_collar_pct / 100)
 
-    committed = sum(r.quantity * r.price for r in ctx.open_risks)
-    sector_committed = sum(r.quantity * r.price for r in ctx.open_risks
+    # Exposure calculations: separate long and short
+    long_committed = sum(r.quantity * r.price for r in ctx.open_risks if r.quantity > 0)
+    short_committed = sum(abs(r.quantity) * r.price for r in ctx.open_risks if r.quantity < 0)
+    committed = long_committed + short_committed  # gross exposure
+    sector_committed = sum(abs(r.quantity) * r.price for r in ctx.open_risks
                            if sec and (s := universe.get(r.symbol)) and s.sector == sec.sector)
-    open_risk_usd = sum(
-        r.quantity * max(r.price - r.stop, 0) if r.stop is not None else r.quantity * r.price * a.unknown_stop_risk_pct / 100
-        for r in ctx.open_risks
-    )
+
+    # Open risk: direction-aware distance from price to stop
+    open_risk_usd = 0.0
+    for r in ctx.open_risks:
+        if r.stop is not None:
+            if r.quantity < 0:
+                # Short: risk = (stop - price) * |qty|  (price rising toward stop)
+                open_risk_usd += abs(r.quantity) * max(r.stop - r.price, 0)
+            else:
+                open_risk_usd += r.quantity * max(r.price - r.stop, 0)
+        else:
+            open_risk_usd += abs(r.quantity) * r.price * a.unknown_stop_risk_pct / 100
+
     pct = (lambda x: x / eq * 100) if eq > 0 else (lambda x: math.inf)
 
     checks["order_value_ok"] = order.notional <= a.max_order_value_usd
     checks["position_pct_ok"] = pct(order.notional) <= a.max_position_pct
     checks["sector_pct_ok"] = pct(sector_committed + order.notional) <= a.max_sector_pct
-    checks["total_exposure_ok"] = pct(committed + order.notional) <= a.max_total_exposure_pct
+    checks["gross_exposure_ok"] = pct(long_committed + short_committed + order.notional) <= a.max_gross_exposure_pct
+    if is_short:
+        checks["short_exposure_ok"] = pct(short_committed + order.notional) <= a.max_short_exposure_pct
+    else:
+        checks["total_exposure_ok"] = pct(long_committed + order.notional) <= a.max_total_exposure_pct
     checks["risk_per_trade_ok"] = pct(order.risk_usd) <= a.max_risk_per_trade_pct + 1e-9
     checks["portfolio_risk_ok"] = pct(open_risk_usd + order.risk_usd) <= a.max_portfolio_risk_pct
     checks["new_trades_per_day_ok"] = ctx.entries_today < a.max_new_trades_per_day
