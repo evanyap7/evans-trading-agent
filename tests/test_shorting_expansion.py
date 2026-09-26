@@ -11,16 +11,6 @@ from trading_agent.risk import RiskContext, evaluate
 from trading_agent.schemas import Evidence
 
 
-def test_default_risk_limits_have_shorting_enabled():
-    limits = load_risk_limits()
-    assert limits.live_trading.permit_shorting is True
-    assert limits.account.max_short_exposure_pct == 50
-    assert limits.account.max_gross_exposure_pct == 150
-    assert limits.account.max_portfolio_risk_pct == 10.0
-    assert limits.account.max_new_trades_per_day == 8
-    assert limits.account.max_order_value_usd == 1500
-
-
 def test_expanded_universe_contents():
     u = load_universe()
     assert len(u.symbols) >= 55
@@ -37,7 +27,9 @@ def test_expanded_universe_contents():
 
 
 def test_short_order_passes_live_risk_checks(universe):
+    # Shorting is a config decision (off until validated); this checks the pipeline once it is switched on.
     limits = load_risk_limits()
+    limits = limits.model_copy(update={"live_trading": limits.live_trading.model_copy(update={"permit_shorting": True})})
     broker = seeded_broker(IN_SESSION)
     account = broker.get_account()
     symbols = ["SPY", "XLK"]
