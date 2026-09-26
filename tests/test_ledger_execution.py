@@ -146,3 +146,36 @@ def test_ledger_stores_side_and_raise_stop_direction(ledger):
     ledger.raise_stop("d_short", 212.0)  # moves up (away from profit): rejected for short
     assert next(t for t in ledger.open_trades() if t["decision_id"] == "d_short")["stop_loss"] == 205.0
 
+
+def test_exit_waits_for_async_stop_cancel(sim, ledger, limits, monkeypatch):
+    """Webull confirms cancels a few seconds later. The exit must wait for that rather than defer and let
+    the next monitor pass re-arm the stop (which left an LLM-requested SMCI exit unsent in production)."""
+    from datetime import date
+
+    from trading_agent.schemas import BrokerOrderStatus
+
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    eng = ExecutionEngine(sim, ledger, limits, send_orders=True)
+    eng.place_protective_stop("d_async", "XLK", 5, 95.0)
+    stop_coid = client_order_id("d_async", "STOP")
+    real_cancel, real_get_order, lag = sim.cancel, sim.get_order, {"polls": 0}
+
+    def async_cancel(coid):  # accepted, but reported WORKING for two more polls
+        lag["polls"] = 2
+
+    def lagging_get_order(coid):
+        if coid == stop_coid and lag["polls"]:
+            lag["polls"] -= 1
+            if not lag["polls"]:
+                real_cancel(coid)
+            return real_get_order(coid).model_copy(update={"status": BrokerOrderStatus.WORKING})
+        return real_get_order(coid)
+
+    monkeypatch.setattr(sim, "cancel", async_cancel)
+    monkeypatch.setattr(sim, "get_order", lagging_get_order)
+
+    state = eng.exit_trade("d_async", "XLK", 5, 101.0, "agent_thesis_exit", date(2026, 9, 22))
+    assert ledger.get_order(stop_coid)["state"] == OrderState.CANCELLED.value
+    assert state == OrderState.FILLED  # the marketable exit went out instead of deferring
+    assert not ledger.has_event("exit_deferred", "d_async")
+
