@@ -23,6 +23,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import os
 import socket
 import sys
 from pathlib import Path
@@ -94,6 +95,14 @@ def _build(args) -> Orchestrator:
         if not settings.webull_account_id:
             sys.exit("WEBULL_ACCOUNT_ID is not set (run `trading-agent accounts`)")
         broker = WebullBroker(settings.webull_account_id, settings.webull_region, settings.webull_environment)
+        if args.broker == "paper":
+            from .broker.paper import PaperBroker
+
+            # Real quotes, simulated fills: "sending" orders only ever reaches the paper book.
+            os.environ["TRADING_AGENT_PAPER"] = "1"
+            settings = settings.model_copy(update={"state_dir": settings.state_dir / "paper",
+                                                   "trading_mode": TradingMode.BROKER, "webull_environment": "paper"})
+            broker = PaperBroker(broker, settings.state_dir / "paper_broker.json")
     if settings.trading_mode == TradingMode.BROKER and settings.is_production and not limits.live_trading.enabled:
         print("NOTE: prod + broker mode but live_trading.enabled is false: every entry will be risk-rejected.")
     agent = (
@@ -112,7 +121,8 @@ def main(argv: list[str] | None = None) -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("research", "execute", "monitor", "tick", "morning-report", "trade-now"):
         c = sub.add_parser(name)
-        c.add_argument("--broker", choices=["webull", "sim"], default="webull")
+        c.add_argument("--broker", choices=["webull", "paper", "sim"], default="webull",
+                       help="paper: live Webull prices, simulated fills, separate ledger in state/paper")
         c.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
         if name == "tick":
             c.add_argument("--continuous", action="store_true", default=None,
@@ -150,7 +160,8 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(out, indent=2, default=str))
     elif args.cmd in ("research", "execute", "monitor", "tick", "morning-report", "trade-now"):
         socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
-        with _single_instance(settings.state_dir / "sim" if args.broker == "sim" else settings.state_dir):
+        lock_dir = settings.state_dir / args.broker if args.broker in ("sim", "paper") else settings.state_dir
+        with _single_instance(lock_dir):  # paper has its own lock so it never blocks a live tick
             _run_cycle(args)
     elif args.cmd == "kill":
         KillSwitch(settings.state_dir).engage(args.reason, by="operator")
