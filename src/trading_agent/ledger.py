@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE TABLE IF NOT EXISTS equity_snapshots (
     ts TEXT NOT NULL,
     trading_date TEXT NOT NULL,
-    equity REAL NOT NULL
+    equity REAL NOT NULL,
+    sweep_pnl REAL NOT NULL DEFAULT 0
 );
 """
 
@@ -121,6 +122,8 @@ class Ledger:
             self.db.execute("ALTER TABLE trades ADD COLUMN initial_stop REAL")
         if "side" not in cols:  # trades opened before long/short support default to long
             self.db.execute("ALTER TABLE trades ADD COLUMN side TEXT DEFAULT 'BUY'")
+        if "sweep_pnl" not in {r["name"] for r in self.db.execute("PRAGMA table_info(equity_snapshots)")}:
+            self.db.execute("ALTER TABLE equity_snapshots ADD COLUMN sweep_pnl REAL NOT NULL DEFAULT 0")
 
     # -- append-only event log ------------------------------------------------
 
@@ -295,8 +298,9 @@ class Ledger:
 
     # -- equity -----------------------------------------------------------------
 
-    def snapshot_equity(self, ts: datetime, trading_date: date, equity: float) -> None:
-        self.db.execute("INSERT INTO equity_snapshots VALUES (?,?,?)", (ts.isoformat(), trading_date.isoformat(), equity))
+    def snapshot_equity(self, ts: datetime, trading_date: date, equity: float, sweep_pnl: float = 0.0) -> None:
+        self.db.execute("INSERT INTO equity_snapshots (ts, trading_date, equity, sweep_pnl) VALUES (?,?,?,?)",
+                        (ts.isoformat(), trading_date.isoformat(), equity, sweep_pnl))
 
     def start_of_day_equity(self, trading_date: date) -> float | None:
         r = self.db.execute(
@@ -306,6 +310,18 @@ class Ledger:
 
     def peak_equity(self) -> float | None:
         r = self.db.execute("SELECT MAX(equity) AS m FROM equity_snapshots").fetchone()
+        return r["m"] if r and r["m"] is not None else None
+
+    # Trading equity = equity minus the cash sweep's P&L: what the drawdown and daily-loss breakers watch.
+
+    def start_of_day_trading_equity(self, trading_date: date) -> float | None:
+        r = self.db.execute(
+            "SELECT equity - sweep_pnl AS e FROM equity_snapshots WHERE trading_date=? ORDER BY ts LIMIT 1",
+            (trading_date.isoformat(),)).fetchone()
+        return r["e"] if r else None
+
+    def peak_trading_equity(self) -> float | None:
+        r = self.db.execute("SELECT MAX(equity - sweep_pnl) AS m FROM equity_snapshots").fetchone()
         return r["m"] if r and r["m"] is not None else None
 
     def iter_rows(self, sql: str, params: tuple = ()) -> Iterator[sqlite3.Row]:

@@ -93,6 +93,11 @@ class BacktestResult:
     trades: list[ClosedTrade]
     equity: list[tuple[date, float]]
     benchmark: list[tuple[date, float]]
+    trend_benchmark: list[tuple[date, float]] = field(default_factory=list)
+    invested: list[float] = field(default_factory=list)  # daily share of equity in agent positions
+    swept: list[float] = field(default_factory=list)     # daily share of equity in the cash sweep
+    sweep_symbol: str | None = None
+    sweep_orders: int = 0
     proposals: int = 0
     unfilled_entries: int = 0
     rejections: Counter = field(default_factory=Counter)
@@ -108,7 +113,8 @@ class BacktestResult:
         losses = [t for t in self.trades if t.pnl <= 0]
         gross_win, gross_loss = sum(t.pnl for t in wins), -sum(t.pnl for t in losses)
         bench = [v for _, v in self.benchmark]
-        return {
+        trend = [v for _, v in self.trend_benchmark]
+        out = {
             "period": f"{self.start} .. {self.end}",
             "trading_days": len(eq),
             "agent": self.agent,
@@ -131,12 +137,20 @@ class BacktestResult:
             "proposals": self.proposals,
             "unfilled_entries": self.unfilled_entries,
             "top_rejections": dict(self.rejections.most_common(8)),
+            "avg_invested_pct": round(fmean(self.invested) * 100, 1) if self.invested else None,
             "benchmark_return_pct": round(_ret(bench), 2),
             "benchmark_max_drawdown_pct": round(_max_dd(bench), 2),
+            "excess_vs_benchmark_pct": round(_ret(eq) - _ret(bench), 2),
+            "trend_benchmark_return_pct": round(_ret(trend), 2),
+            "trend_benchmark_max_drawdown_pct": round(_max_dd(trend), 2),
             "kill_switch_tripped": f"{self.halted_on} ({self.halt_reason})" if self.halted_on else None,
             "kill_switch_trips": len(self.kill_switch_trips),
             "calibration": calibration([(t.confidence, t.r_multiple) for t in self.trades]),
         }
+        if self.sweep_symbol:
+            out["sweep"] = {"symbol": self.sweep_symbol, "orders": self.sweep_orders,
+                            "avg_swept_pct": round(fmean(self.swept) * 100, 1) if self.swept else None}
+        return out
 
     def report(self) -> str:
         s = self.summary()
@@ -154,8 +168,10 @@ class BacktestResult:
         bench = dict(self.benchmark)
         with open(out_dir / "equity.csv", "w", newline="") as fh:
             w = csv.writer(fh)
-            w.writerow(["date", "equity", "benchmark"])
-            w.writerows((d, round(v, 2), round(bench.get(d, math.nan), 2)) for d, v in self.equity)
+            trend = dict(self.trend_benchmark)
+            w.writerow(["date", "equity", "benchmark", "trend_benchmark"])
+            w.writerows((d, round(v, 2), round(bench.get(d, math.nan), 2), round(trend.get(d, math.nan), 2))
+                        for d, v in self.equity)
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +188,11 @@ class Backtester:
         self.halt_on_kill_switch = halt_on_kill_switch
         self.cache = output_cache
         self.earnings = {s: sorted(ds) for s, ds in (earnings_history or {}).items()}
-        self.bars = {s: sorted(b, key=lambda x: x.ts) for s, b in bars.items() if s in universe.symbols and b}
+        self.sweep = limits.cash_sweep if limits.cash_sweep.enabled else None
+        keep = set(universe.symbols) | ({self.sweep.symbol} if self.sweep else set())
+        self.bars = {s: sorted(b, key=lambda x: x.ts) for s, b in bars.items() if s in keep and b}
+        if self.sweep and self.sweep.symbol not in self.bars:
+            raise ValueError(f"no bars for cash sweep symbol {self.sweep.symbol}")
         self.dates = {s: [b.ts.date() for b in bs] for s, bs in self.bars.items()}
         bench = universe.regime_benchmark
         if bench not in self.bars:
@@ -187,11 +207,16 @@ class Backtester:
         self.positions: dict[str, OpenPosition] = {}
         self.pending_entries: list[PendingEntry] = []
         self.pending_closes: set[str] = set()
+        # Breakers run on trading equity (account minus the sweep's P&L), as in live.
         self.peak = starting_cash
         self.prev_close_equity = starting_cash
+        self.last_equity = starting_cash
         self.halted = False
+        self.sweep_qty = 0
+        self.sweep_net = 0.0  # cash put into the sweep minus cash taken out, fees and slippage included
         self.result = BacktestResult(start=self.calendar[0], end=self.calendar[-1], agent=f"{agent.name}:{agent.model}",
-                                     starting_equity=starting_cash, trades=[], equity=[], benchmark=[])
+                                     starting_equity=starting_cash, trades=[], equity=[], benchmark=[],
+                                     sweep_symbol=self.sweep.symbol if self.sweep else None)
 
     # -- data access -----------------------------------------------------------------
 
@@ -220,6 +245,7 @@ class Backtester:
         ex = self.limits.execution
         bench = self.universe.regime_benchmark
         bench_start = self._bar(bench, self.calendar[0]).close
+        trend_value = self.result.starting_equity
         for idx, d in enumerate(self.calendar):
             self._open(idx, d)
             for sym in list(self.positions):
@@ -237,22 +263,31 @@ class Backtester:
             equity = self._equity(d)
             self.result.equity.append((d, equity))
             self.result.benchmark.append((d, self.result.starting_equity * self._bar(bench, d).close / bench_start))
-            self.peak = max(self.peak, equity)
-            if not self.halted and (equity / self.peak - 1) * 100 <= -self.limits.account.max_drawdown_pct:
+            if idx > 0 and _above_sma200(self._history(bench, self.calendar[idx - 1])):
+                trend_value *= self._bar(bench, d).close / self._last_close(bench, self.calendar[idx - 1])
+            self.result.trend_benchmark.append((d, trend_value))
+            if equity > 0:
+                self.result.invested.append(
+                    sum(p.qty * self._last_close(p.symbol, d) for p in self.positions.values()) / equity)
+                self.result.swept.append(self._sweep_value(d) / equity)
+            guard = equity - self._sweep_pnl(d)
+            self.peak = max(self.peak, guard)
+            if not self.halted and (guard / self.peak - 1) * 100 <= -self.limits.account.max_drawdown_pct:
                 self.result.kill_switch_trips.append(d)
                 if self.result.halted_on is None:
                     self.result.halted_on = d
-                    self.result.halt_reason = f"drawdown {(equity / self.peak - 1) * 100:.1f}% from peak {self.peak:.2f}"
+                    self.result.halt_reason = f"drawdown {(guard / self.peak - 1) * 100:.1f}% from peak {self.peak:.2f}"
                 if self.halt_on_kill_switch:
                     self.halted = True
                     self.pending_entries.clear()
                 else:
                     # As if the operator released the kill switch and reset the high-water mark; without the
                     # reset the risk engine's drawdown_ok check would keep blocking entries anyway.
-                    self.peak = equity
+                    self.peak = guard
             if idx < len(self.calendar) - 1:
                 self._research(idx, d, equity)
-            self.prev_close_equity = equity
+            self.prev_close_equity = guard
+            self.last_equity = equity
         # Mark anything still open at the last close so the trade list is complete.
         last = self.calendar[-1]
         for sym in list(self.positions):
@@ -263,7 +298,46 @@ class Backtester:
         return self.result
 
     def _equity(self, d: date) -> float:
-        return self.cash + sum(p.qty * self._last_close(p.symbol, d) for p in self.positions.values())
+        return self.cash + self._sweep_value(d) + sum(p.qty * self._last_close(p.symbol, d)
+                                                      for p in self.positions.values())
+
+    # -- cash sweep -------------------------------------------------------------------
+
+    def _sweep_value(self, d: date) -> float:
+        return self.sweep_qty * self._last_close(self.sweep.symbol, d) if self.sweep else 0.0
+
+    def _sweep_pnl(self, d: date) -> float:
+        return self._sweep_value(d) - self.sweep_net if self.sweep else 0.0
+
+    def _sweep_trade(self, qty: int, px: float) -> None:
+        """Buy (qty > 0) or sell (qty < 0) sweep shares at px, which already includes slippage."""
+        fee = self.limits.execution.fee_per_order_usd
+        cash_delta = -qty * px - fee
+        self.cash += cash_delta
+        self.sweep_net -= cash_delta
+        self.sweep_qty += qty
+        self.result.sweep_orders += 1
+
+    def _sweep_raise(self, need: float, d: date) -> None:
+        """Sell enough whole sweep shares at the open for cash to cover `need`."""
+        bar = self._bar(self.sweep.symbol, d)
+        short = need - self.cash
+        if short <= 0 or self.sweep_qty <= 0 or bar is None:
+            return
+        px = bar.open * (1 - self.limits.execution.slippage_bps / 10_000)
+        self._sweep_trade(-min(self.sweep_qty, math.ceil((short + self.limits.execution.fee_per_order_usd) / px)), px)
+
+    def _sweep_invest(self, d: date) -> None:
+        """Put cash above the reserve into whole sweep shares at the open."""
+        bar = self._bar(self.sweep.symbol, d)
+        if bar is None:
+            return
+        ex = self.limits.execution
+        px = bar.open * (1 + ex.slippage_bps / 10_000)
+        spare = self.cash - self.sweep.reserve_pct / 100 * self.last_equity - ex.fee_per_order_usd
+        n = math.floor(spare / px) if spare > 0 else 0
+        if n >= 1 and n * px >= self.sweep.min_trade_usd:
+            self._sweep_trade(n, px)
 
     # -- open of day ------------------------------------------------------------------
 
@@ -276,6 +350,9 @@ class Backtester:
                 self._close(sym, bar.open * (1 - slip), d, idx, "agent_close")
         self.pending_closes.clear()
 
+        if self.sweep and self.pending_entries:
+            self._sweep_raise(sum(pe.order.quantity * pe.order.limit_price * (1 + slip) + ex.fee_per_order_usd
+                                  for pe in self.pending_entries), d)
         for pe in self.pending_entries:
             o = pe.order
             bar = self._bar(o.symbol, d)
@@ -296,6 +373,8 @@ class Backtester:
                 stop=o.stop_loss, take_profit=o.take_profit, entry_idx=idx,
                 time_stop_idx=idx + pe.trade.exit.time_stop_days, confidence=pe.trade.confidence)
         self.pending_entries.clear()
+        if self.sweep and not self.halted:  # the kill switch stops new buys, sweep included
+            self._sweep_invest(d)
 
     def _close(self, sym: str, px: float, d: date, idx: int, reason: str) -> None:
         p = self.positions.pop(sym)
@@ -313,7 +392,8 @@ class Backtester:
 
     def _research(self, idx: int, d: date, equity: float) -> None:
         now = datetime.combine(d, RESEARCH_TIME, ET)
-        history = {s: h for s in self.bars if len(h := self._history(s, d)) > 0 and h[-1].ts.date() >= d - timedelta(days=10)}
+        history = {s: h for s in self.bars if s in self.universe.symbols
+                   and len(h := self._history(s, d)) > 0 and h[-1].ts.date() >= d - timedelta(days=10)}
         evidence, features = build_evidence(history, {}, self.universe.regime_benchmark)
         positions = [Position(symbol=p.symbol, quantity=p.qty, avg_cost=p.entry, last_price=self._last_close(p.symbol, d))
                      for p in self.positions.values()]
@@ -323,7 +403,9 @@ class Backtester:
                        "time_stop_date": self.calendar[min(p.time_stop_idx, len(self.calendar) - 1)].isoformat()}
             evidence.append(Evidence(evidence_id=f"pos_{p.symbol}_{d:%Y%m%d}", kind="position", symbol=p.symbol,
                                      as_of=now, source="backtest.positions", payload=payload))
-        account = AccountState(account_id="backtest", equity=equity, cash=self.cash, buying_power=self.cash,
+        spendable = self.cash + self._sweep_value(d)  # the sweep is sold at the next open to fund entries
+        sweep_pnl = self._sweep_pnl(d)
+        account = AccountState(account_id="backtest", equity=equity, cash=spendable, buying_power=spendable,
                                positions=positions, open_orders=[], as_of=now)
         earnings = {s: nd for s, sec in self.universe.symbols.items()
                     if sec.type == "EQUITY" and (nd := self._next_earnings(s, d)) is not None}
@@ -331,7 +413,7 @@ class Backtester:
         ctx = AgentContext(
             as_of=d, evidence=evidence,
             universe={s: {"type": sec.type, "sector": sec.sector} for s, sec in self.universe.symbols.items()},
-            account_summary={"equity_usd": round(equity, 2), "cash_usd": round(self.cash, 2),
+            account_summary={"equity_usd": round(equity, 2), "cash_usd": round(spendable, 2),
                              "gross_exposure_pct": round(exposure / equity * 100, 2) if equity else None},
             positions=[{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost, "last": p.last_price}
                        for p in positions],
@@ -357,7 +439,7 @@ class Backtester:
         if self.halted:
             return
 
-        cash = self.cash + freed
+        cash = spendable + freed
         events = Events(earnings=earnings)
         for n, trade in enumerate(output.proposals):
             self.result.proposals += 1
@@ -380,8 +462,8 @@ class Backtester:
             rctx = RiskContext(
                 now=now, trading_date=d, account=acct, quote=None, kill_switch_engaged=self.halted,
                 sends_real_orders_to_prod=False, require_session=False, reconciled=True,
-                entries_today=len(self.pending_entries), start_of_day_equity=self.prev_close_equity,
-                peak_equity=self.peak, decision_already_executed=False, open_risks=open_risks)
+                entries_today=len(self.pending_entries), start_of_day_equity=self.prev_close_equity + sweep_pnl,
+                peak_equity=self.peak + sweep_pnl, decision_already_executed=False, open_risks=open_risks)
             decision = evaluate(sized, trade.instrument_type, trade.holding_period_days, rctx, self.limits,
                                 self.universe, events)
             if not decision.approved:
@@ -390,6 +472,11 @@ class Backtester:
                 continue
             self.pending_entries.append(PendingEntry(order=sized, trade=trade))
             cash -= sized.notional + self.limits.execution.fee_per_order_usd
+
+
+def _above_sma200(history: list[Bar]) -> bool:
+    closes = [b.close for b in history[-200:]]
+    return len(closes) == 200 and closes[-1] > fmean(closes)
 
 
 def manage_bar(p: OpenPosition, bar: Bar, idx: int, slippage_bps: float) -> tuple[float, str] | None:

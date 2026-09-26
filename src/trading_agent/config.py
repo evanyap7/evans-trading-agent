@@ -107,12 +107,32 @@ class EventLimits(Frozen):
     require_earnings_data_for_stocks: bool = True
 
 
+class CashSweep(Frozen):
+    """Idle cash parked in one broad ETF, sold again to fund entries.
+
+    The sweep is not a trade: it never counts toward exposure, sector or portfolio-risk limits, it is
+    spendable cash for sizing, and the drawdown / daily-loss breakers measure the account without its
+    gains and losses, so an ordinary market dip does not halt the agent."""
+
+    enabled: bool = False
+    symbol: str = "SPYM"
+    reserve_pct: float = Field(default=5.0, ge=0, le=100)  # of equity, always left in cash
+    min_trade_usd: float = Field(default=50.0, ge=0)       # smaller top-ups are not worth an order
+
+    @model_validator(mode="after")
+    def _symbol_shape(self) -> "CashSweep":
+        if not self.symbol.isalnum() or not self.symbol.isupper():
+            raise ValueError("cash_sweep.symbol must be an upper-case ticker")
+        return self
+
+
 class RiskLimits(Frozen):
     live_trading: LiveTradingLimits
     account: AccountLimits
     signal: SignalLimits
     execution: ExecutionLimits
     events: EventLimits
+    cash_sweep: CashSweep = CashSweep()
     source_sha256: str = Field(default="", description="Hash of the YAML this was loaded from")
 
 
