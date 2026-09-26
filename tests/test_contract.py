@@ -104,3 +104,25 @@ def test_invalid_short_proposals_rejected(change):
     with pytest.raises(ValidationError):
         TradeProposal(**{**SHORT_BASE, **change})
 
+
+def test_estimate_revision_payload_from_yfinance_frames():
+    from datetime import datetime, timezone
+
+    import pandas as pd
+
+    from trading_agent.news import estimate_revision_payload
+
+    revisions = pd.DataFrame({"upLast30days": [21, 19], "downLast30days": [8, 3]}, index=["0y", "+1y"])
+    trend = pd.DataFrame({"current": [20.0, 24.0], "30daysAgo": [19.0, 24.0], "90daysAgo": [16.0, 20.0]},
+                         index=["0y", "+1y"])
+    actions = pd.DataFrame(
+        {"Action": ["up", "main", "down"], "currentPriceTarget": [550.0, 530.0, 400.0],
+         "priorPriceTarget": [500.0, 530.0, 450.0]},
+        index=pd.to_datetime(["2026-09-20", "2026-09-10", "2026-07-01"]))  # the last one is outside 30 days
+    p = estimate_revision_payload(revisions, trend, actions, datetime(2026, 9, 26, tzinfo=timezone.utc))
+    assert p["fy0_eps_up_30d"] == 21 and p["fy1_eps_down_30d"] == 3
+    assert p["fy0_eps_est_chg_30d_pct"] == 5.26 and p["fy1_eps_est_chg_90d_pct"] == 20.0
+    assert p["analyst_upgrades_30d"] == 1 and p["analyst_downgrades_30d"] == 0
+    assert p["avg_price_target_chg_30d_pct"] == 5.0  # (+10% and 0%) / 2
+    assert estimate_revision_payload(None, None, None, datetime(2026, 9, 26)) == {}
+
