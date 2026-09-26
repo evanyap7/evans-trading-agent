@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import feedparser
@@ -150,3 +150,57 @@ def fetch_all_market_news(universe_symbols: list[str] | None = None) -> list[Evi
         sample = universe_symbols[:10]
         ticker_docs = fetch_ticker_news(sample, max_per_symbol=2)
     return macro + ticker_docs
+
+
+def _pct_change(now: Any, then: Any) -> float | None:
+    try:
+        now, then = float(now), float(then)
+    except (TypeError, ValueError):
+        return None
+    return round((now / then - 1) * 100, 2) if then else None
+
+
+def estimate_revision_payload(revisions: Any, trend: Any, actions: Any, today: datetime) -> dict:
+    """Sell-side estimate momentum for one stock: the catalyst data a desk analyst checks first.
+
+    `revisions` / `trend` are yfinance eps_revisions / eps_trend frames (rows 0y = this fiscal year,
+    +1y = next); `actions` is upgrades_downgrades (dated index, Action in up/down/main/init/reit)."""
+    out: dict = {}
+    for period, label in (("0y", "fy0"), ("+1y", "fy1")):
+        if revisions is not None and period in getattr(revisions, "index", []):
+            r = revisions.loc[period]
+            out[f"{label}_eps_up_30d"] = int(r.get("upLast30days") or 0)
+            out[f"{label}_eps_down_30d"] = int(r.get("downLast30days") or 0)
+        if trend is not None and period in getattr(trend, "index", []):
+            t = trend.loc[period]
+            out[f"{label}_eps_est_chg_30d_pct"] = _pct_change(t.get("current"), t.get("30daysAgo"))
+            out[f"{label}_eps_est_chg_90d_pct"] = _pct_change(t.get("current"), t.get("90daysAgo"))
+    if actions is not None and len(actions) and "Action" in actions:
+        idx = actions.index.tz_localize(None) if getattr(actions.index, "tz", None) else actions.index
+        recent = actions[idx >= today.replace(tzinfo=None) - timedelta(days=30)]
+        acts = recent["Action"].str.lower()
+        out["analyst_upgrades_30d"] = int((acts == "up").sum())
+        out["analyst_downgrades_30d"] = int((acts == "down").sum())
+        if {"currentPriceTarget", "priorPriceTarget"} <= set(recent.columns):
+            moves = [m for c, p in zip(recent["currentPriceTarget"], recent["priorPriceTarget"])
+                     if (m := _pct_change(c, p)) is not None]
+            out["avg_price_target_chg_30d_pct"] = round(sum(moves) / len(moves), 2) if moves else None
+    return out
+
+
+def fetch_estimate_revisions(symbols: list[str]) -> list[Evidence]:
+    """One numeric evidence item per stock. Missing data is skipped, never guessed."""
+    import yfinance as yf
+
+    now, out = utcnow(), []
+    for sym in symbols:
+        try:
+            t = yf.Ticker(sym)
+            payload = estimate_revision_payload(t.eps_revisions, t.eps_trend, t.upgrades_downgrades, now)
+        except Exception:
+            continue
+        if payload:
+            h = hashlib.sha256(repr(sorted(payload.items())).encode()).hexdigest()[:10]
+            out.append(Evidence(evidence_id=f"est_{sym}_{now:%Y%m%d}_{h}", kind="event", symbol=sym, as_of=now,
+                                source="yfinance.estimates", payload=payload))
+    return out
