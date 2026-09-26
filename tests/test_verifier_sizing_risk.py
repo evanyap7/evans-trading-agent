@@ -219,13 +219,13 @@ def test_risk_short_exposure_cap(setup, limits, universe):
     p = good_short_proposal(ctx)
     s = size_order("d_short", p, b.get_account(), feats["XLK"]["avg_volume_20d"], on_limits)
 
-    # Put 30.5% short exposure already in place: max_short_exposure_pct is 30%
+    # Put short exposure already in place exceeding max_short_exposure_pct
     acct = b.get_account()
-    existing_short_notional = acct.equity * 0.305
+    existing_short_notional = acct.equity * (on_limits.account.max_short_exposure_pct / 100 + 0.005)
     open_risks = [OpenRisk("SPY", -existing_short_notional / 400, 400, 410)]
     ctx_risk = _ctx(b, open_risks=open_risks)
 
-    # Sized order notional pushes short exposure over 30%
+    # Sized order notional pushes short exposure over the cap
     d = evaluate(s, "ETF", 10, ctx_risk, on_limits, universe, Events())
     assert not d.approved
     assert "short_exposure_ok" in d.failed_checks

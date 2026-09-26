@@ -55,7 +55,7 @@ than 8%, size with Kelly, never have more than 6% at risk). Here they are applie
 - **Kelly sizing.** Risk per trade is `kelly_fraction x (p - (1 - p) / reward_risk)` of equity (quarter
   Kelly by default). It is still capped by `requested_risk_pct` and `max_risk_per_trade_pct`. An idea with no
   Kelly edge gets no size.
-- **6% at risk.** `max_portfolio_risk_pct: 6.0` caps the sum of `(price - stop) x qty` across open positions.
+- **10% at risk.** `max_portfolio_risk_pct: 10.0` caps the sum of `(price - stop) x qty` across open positions.
 - **10-minute scans.** With `CONTINUOUS_TRADING=true`, the research pass runs every
   `SCAN_INTERVAL_MINUTES` (default 10) during regular hours. Each scan is an LLM call, so costs scale with it.
 
@@ -65,7 +65,7 @@ than 8%, size with Kelly, never have more than 6% at risk). Here they are applie
 cd ~/trading-agent
 uv sync --extra webull
 cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run pytest                # 83 passing
+uv run pytest                # 131 passing
 uv run trading-agent research --broker sim   # offline dry run on synthetic data
 ```
 
