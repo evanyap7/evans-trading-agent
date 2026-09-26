@@ -59,6 +59,7 @@ class OpenPosition:
     take_profit: float
     entry_idx: int
     time_stop_idx: int
+    confidence: float = 0.0
 
 
 @dataclass
@@ -74,6 +75,7 @@ class ClosedTrade:
     pnl: float
     r_multiple: float
     bars_held: int
+    confidence: float = 0.0  # the agent's stated P(target before stop), for calibration
 
 
 @dataclass
@@ -133,6 +135,7 @@ class BacktestResult:
             "benchmark_max_drawdown_pct": round(_max_dd(bench), 2),
             "kill_switch_tripped": f"{self.halted_on} ({self.halt_reason})" if self.halted_on else None,
             "kill_switch_trips": len(self.kill_switch_trips),
+            "calibration": calibration([(t.confidence, t.r_multiple) for t in self.trades]),
         }
 
     def report(self) -> str:
@@ -291,7 +294,7 @@ class Backtester:
             self.positions[o.symbol] = OpenPosition(
                 decision_id=o.decision_id, symbol=o.symbol, qty=o.quantity, entry=px, initial_stop=o.stop_loss,
                 stop=o.stop_loss, take_profit=o.take_profit, entry_idx=idx,
-                time_stop_idx=idx + pe.trade.exit.time_stop_days)
+                time_stop_idx=idx + pe.trade.exit.time_stop_days, confidence=pe.trade.confidence)
         self.pending_entries.clear()
 
     def _close(self, sym: str, px: float, d: date, idx: int, reason: str) -> None:
@@ -303,7 +306,8 @@ class Backtester:
         self.result.trades.append(ClosedTrade(
             symbol=sym, entry_date=self.calendar[p.entry_idx], exit_date=d, qty=p.qty, entry=round(p.entry, 4),
             exit=round(px, 4), initial_stop=p.initial_stop, reason=reason, pnl=round(pnl, 2),
-            r_multiple=round((px - p.entry) / risk, 3) if risk > 0 else 0.0, bars_held=idx - p.entry_idx))
+            r_multiple=round((px - p.entry) / risk, 3) if risk > 0 else 0.0, bars_held=idx - p.entry_idx,
+            confidence=p.confidence))
 
     # -- close of day: research ------------------------------------------------------------
 
@@ -497,6 +501,20 @@ def _normalize(msg: str) -> str:
     """Group rejection messages by kind: drop the numbers and symbols that vary per case."""
     msg = re.sub(r"\b[A-Z]{1,5}\b(?= )", "SYM", msg)
     return re.sub(r"-?\d[\d,]*\.?\d*", "#", msg)[:80]
+
+
+def calibration(pairs: list[tuple[float, float]]) -> dict[str, dict]:
+    """Stated confidence vs what happened, per 0.1-wide bucket of (confidence, r_multiple) pairs.
+
+    Kelly sizing treats confidence as a real probability: if win_rate sits well below avg_confidence,
+    every trade in that bucket is oversized."""
+    buckets: dict[str, list[tuple[float, float]]] = {}
+    for conf, r in pairs:
+        lo = min(math.floor(conf * 10), 9) / 10
+        buckets.setdefault(f"{lo:.1f}-{lo + 0.1:.1f}", []).append((conf, r))
+    return {k: {"trades": len(v), "avg_confidence": round(fmean(c for c, _ in v), 3),
+                "win_rate": round(sum(r > 0 for _, r in v) / len(v), 3), "avg_r": round(fmean(r for _, r in v), 3)}
+            for k, v in sorted(buckets.items())}
 
 
 def _ret(eq: list[float]) -> float:

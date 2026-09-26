@@ -157,3 +157,12 @@ def test_output_cache_replays_without_calling_the_agent(tmp_path):
     budget = AgentOutputCache(tmp_path / "fresh", max_new_calls=2)
     res = run(trend_universe(), ScriptedAgent(counted), output_cache=budget)
     assert budget.misses == 2 and res.rejections["agent error: RuntimeError"] > 0
+
+
+def test_calibration_buckets_confidence_against_outcomes():
+    from trading_agent.backtest import calibration
+
+    table = calibration([(0.62, 2.0), (0.65, -1.0), (0.68, -1.0), (0.81, 1.5), (1.0, 2.0)])
+    assert table["0.6-0.7"] == {"trades": 3, "avg_confidence": 0.65, "win_rate": 0.333, "avg_r": 0.0}
+    assert table["0.9-1.0"]["trades"] == 1  # confidence 1.0 lands in the top bucket, not a new one
+    assert set(table) == {"0.6-0.7", "0.8-0.9", "0.9-1.0"}

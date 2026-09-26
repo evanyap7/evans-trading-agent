@@ -10,6 +10,7 @@
     trading-agent kill --reason "..."      operator stop: block new orders, cancel working entries
     trading-agent unkill
     trading-agent verify-ledger            check the audit hash chain
+    trading-agent calibration              the agent's stated confidence vs actual results on closed trades
     trading-agent backtest --start 2024-01-01 [--end ...] [--agent llm] [--cash 1500]
                                            replay history through the live pipeline
 
@@ -124,6 +125,7 @@ def main(argv: list[str] | None = None) -> None:
     k.add_argument("--reason", required=True)
     sub.add_parser("unkill")
     sub.add_parser("verify-ledger")
+    sub.add_parser("calibration")
     bt = sub.add_parser("backtest", help="replay historical daily bars through the live decision pipeline")
     bt.add_argument("--start", required=True, type=_date, help="first trading day (YYYY-MM-DD)")
     bt.add_argument("--end", type=_date, default=None, help="last trading day (default: yesterday)")
@@ -162,6 +164,8 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(0 if ok else 1)
     elif args.cmd == "status":
         _status(settings)
+    elif args.cmd == "calibration":
+        _calibration(settings)
     elif args.cmd == "backtest":
         socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
         _backtest(args, settings)
@@ -213,6 +217,28 @@ def _backtest(args, settings) -> None:
     out = args.out or settings.state_dir / "backtests" / datetime.now().strftime("%Y%m%d-%H%M%S")
     result.write(out)
     print(f"wrote {out}/summary.json, trades.csv, equity.csv")
+
+
+def _calibration(settings) -> None:
+    from .backtest import calibration
+    from .schemas import Proposal
+
+    led = Ledger(settings.state_dir / "ledger.db")
+    pairs = []
+    for t in led.iter_rows("SELECT * FROM trades WHERE status='CLOSED'"):
+        pa = led.db.execute("SELECT proposal FROM pending_actions WHERE decision_id=?", (t["decision_id"],)).fetchone()
+        fills = led.db.execute("SELECT SUM(filled_quantity) q, SUM(filled_quantity * filled_price) v FROM orders "
+                               "WHERE decision_id=? AND purpose IN ('EXIT','STOP') AND state='FILLED'",
+                               (t["decision_id"],)).fetchone()
+        risk = abs(t["entry_price"] - (t["initial_stop"] or t["stop_loss"]))
+        if pa is None or not fills["q"] or risk <= 0:
+            continue
+        sign = -1 if t["side"] == "SELL_SHORT" else 1
+        pairs.append((Proposal.model_validate_json(pa["proposal"]).trade.confidence,
+                      sign * (fills["v"] / fills["q"] - t["entry_price"]) / risk))
+    print(f"{len(pairs)} closed system trades with a known confidence and exit fill")
+    for bucket, row in calibration(pairs).items():
+        print(f"  confidence {bucket}: {row}")
 
 
 def _status(settings) -> None:
