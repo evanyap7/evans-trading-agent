@@ -191,6 +191,12 @@ class Orchestrator:
                 evidence.extend(news_docs)
             except Exception as e:
                 rep.add(f"news ingestion note: {e}")
+            try:
+                from .news import fetch_estimate_revisions
+                stocks = [s for s in symbols if (sec := self.universe.get(s)) and sec.type == "EQUITY"]
+                evidence.extend(fetch_estimate_revisions(stocks))
+            except Exception as e:
+                rep.add(f"estimate revisions unavailable: {e}")
         trades = {t["symbol"]: t for t in self.ledger.open_trades()}
         for p in account.positions:
             t = trades.get(p.symbol)
