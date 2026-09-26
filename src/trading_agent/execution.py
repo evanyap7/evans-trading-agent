@@ -7,6 +7,7 @@ retry: the order goes to UNKNOWN_RECONCILE and is resolved by querying Webull.
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import date, datetime, timedelta
 
 from .broker.base import Broker, BrokerError, OrderRequest
@@ -83,6 +84,20 @@ class ExecutionEngine:
         expected = req.limit_price * req.quantity
         tolerance = 0.03 * expected + self.limits.execution.fee_per_order_usd + 1
         return "" if abs(cost - expected) <= tolerance else f"preview cost {cost} differs from intended {expected:.2f}"
+
+    CANCEL_CONFIRM_POLLS = 5  # Webull confirms cancels asynchronously, typically within ~3s
+
+    def _cancel_and_confirm(self, coid: str) -> OrderState:
+        """Cancel, then re-check briefly until the broker confirms. Without the wait an exit that must
+        first pull the stop defers every pass, and the next monitor pass re-arms the stop it just pulled."""
+        self.cancel(coid)
+        state = OrderState(self.ledger.get_order(coid)["state"])
+        for _ in range(self.CANCEL_CONFIRM_POLLS):
+            if state in TERMINAL_STATES:
+                break
+            time.sleep(1)
+            state = self.sync(coid)
+        return state
 
     def cancel(self, coid: str) -> None:
         row = self.ledger.get_order(coid)
@@ -312,8 +327,7 @@ class ExecutionEngine:
             return "skipped: stop order budget used"
         row = self.active_stop(decision_id)
         if row is not None and OrderState(row["state"]) not in TERMINAL_STATES:
-            self.cancel(row["client_order_id"])
-            state = OrderState(self.ledger.get_order(row["client_order_id"])["state"])
+            state = self._cancel_and_confirm(row["client_order_id"])
             if state == OrderState.FILLED:
                 return "skipped: old stop filled"
             if state not in TERMINAL_STATES:
@@ -377,8 +391,7 @@ class ExecutionEngine:
             return OrderState.REJECTED
         stop_row = self.active_stop(decision_id)
         if stop_row is not None and OrderState(stop_row["state"]) not in TERMINAL_STATES:
-            self.cancel(stop_row["client_order_id"])
-            state = OrderState(self.ledger.get_order(stop_row["client_order_id"])["state"])
+            state = self._cancel_and_confirm(stop_row["client_order_id"])
             if state == OrderState.FILLED:
                 return state  # the stop already closed the position
             if state not in TERMINAL_STATES:
