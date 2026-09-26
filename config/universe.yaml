@@ -1,6 +1,7 @@
 # Tradable allowlist. Anything not listed is rejected by the risk engine.
 # Start small and liquid; expand only with evidence.
 symbols:
+  # Broad Market & Key Sector ETFs
   SPY:   {type: ETF, sector: Broad Market}
   QQQ:   {type: ETF, sector: Broad Market}
   IWM:   {type: ETF, sector: Broad Market}
@@ -15,20 +16,75 @@ symbols:
   XLU:   {type: ETF, sector: Utilities}
   TLT:   {type: ETF, sector: Rates}
   GLD:   {type: ETF, sector: Commodities}
+  SMH:   {type: ETF, sector: Technology}
+  XBI:   {type: ETF, sector: Health Care}
+  ARKK:  {type: ETF, sector: Technology}
+  KRE:   {type: ETF, sector: Financials}
+
+  # Technology & Semiconductors
   AAPL:  {type: EQUITY, sector: Technology}
   MSFT:  {type: EQUITY, sector: Technology}
   NVDA:  {type: EQUITY, sector: Technology}
+  AMD:   {type: EQUITY, sector: Technology}
+  AVGO:  {type: EQUITY, sector: Technology}
+  QCOM:  {type: EQUITY, sector: Technology}
+  TSM:   {type: EQUITY, sector: Technology}
+  INTC:  {type: EQUITY, sector: Technology}
+  MU:    {type: EQUITY, sector: Technology}
+  ARM:   {type: EQUITY, sector: Technology}
+  PLTR:  {type: EQUITY, sector: Technology}
+  SMCI:  {type: EQUITY, sector: Technology}
+
+  # Cloud, Software & Cybersecurity
+  CRM:   {type: EQUITY, sector: Technology}
+  ORCL:  {type: EQUITY, sector: Technology}
+  ADBE:  {type: EQUITY, sector: Technology}
+  NOW:   {type: EQUITY, sector: Technology}
+  PANW:  {type: EQUITY, sector: Technology}
+  CRWD:  {type: EQUITY, sector: Technology}
+  SNOW:  {type: EQUITY, sector: Technology}
+
+  # Consumer & Communication Services
   AMZN:  {type: EQUITY, sector: Consumer Discretionary}
+  TSLA:  {type: EQUITY, sector: Consumer Discretionary}
   GOOGL: {type: EQUITY, sector: Communication Services}
   GOOG:  {type: EQUITY, sector: Communication Services}
   NFLX:  {type: EQUITY, sector: Communication Services}
   META:  {type: EQUITY, sector: Communication Services}
-  TSLA:  {type: EQUITY, sector: Consumer Discretionary}
-  AMD:   {type: EQUITY, sector: Technology}
-  PLTR:  {type: EQUITY, sector: Technology}
-  SMCI:  {type: EQUITY, sector: Technology}
-  AEMD:  {type: EQUITY, sector: Health Care}
+  DIS:   {type: EQUITY, sector: Communication Services}
+  NKE:   {type: EQUITY, sector: Consumer Discretionary}
+  SBUX:  {type: EQUITY, sector: Consumer Discretionary}
+  TGT:   {type: EQUITY, sector: Consumer Discretionary}
+  HD:    {type: EQUITY, sector: Consumer Discretionary}
+  COST:  {type: EQUITY, sector: Consumer Staples}
+  WMT:   {type: EQUITY, sector: Consumer Staples}
+
+  # Financials & Fintech
   JPM:   {type: EQUITY, sector: Financials}
+  V:     {type: EQUITY, sector: Financials}
+  MA:    {type: EQUITY, sector: Financials}
+  GS:    {type: EQUITY, sector: Financials}
+  MS:    {type: EQUITY, sector: Financials}
+  PYPL:  {type: EQUITY, sector: Financials}
+  COIN:  {type: EQUITY, sector: Financials}
+
+  # Industrials & Aerospace
+  BA:    {type: EQUITY, sector: Industrials}
+  CAT:   {type: EQUITY, sector: Industrials}
+  GE:    {type: EQUITY, sector: Industrials}
+  UBER:  {type: EQUITY, sector: Industrials}
+
+  # Energy & Resources
   XOM:   {type: EQUITY, sector: Energy}
+  CVX:   {type: EQUITY, sector: Energy}
+  COP:   {type: EQUITY, sector: Energy}
+
+  # Healthcare & Biotechnology
+  LLY:   {type: EQUITY, sector: Health Care}
+  UNH:   {type: EQUITY, sector: Health Care}
+  ABBV:  {type: EQUITY, sector: Health Care}
+  MRNA:  {type: EQUITY, sector: Health Care}
+  PFE:   {type: EQUITY, sector: Health Care}
+  AEMD:  {type: EQUITY, sector: Health Care}
 
 regime_benchmark: SPY
