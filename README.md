@@ -59,13 +59,49 @@ than 8%, size with Kelly, never have more than 6% at risk). Here they are applie
 - **10-minute scans.** With `CONTINUOUS_TRADING=true`, the research pass runs every
   `SCAN_INTERVAL_MINUTES` (default 10) during regular hours. Each scan is an LLM call, so costs scale with it.
 
+## Cash sweep (idle cash in an index ETF)
+
+Backtests showed the agent holding only 17-32% of the account on average, so most of the money sat in
+cash while the market rose. With `cash_sweep.enabled: true` in `config/risk_limits.yaml`:
+
+- **Execute** (09:45 ET) buys whole shares of `cash_sweep.symbol` with cash above `reserve_pct` of equity
+  and above what working entry orders need. Default `SPYM`, an S&P 500 ETF at about $90 a share, so a
+  small account can hold whole shares (SPY is about $770). Use `SGOV` (T-bills) for low risk instead.
+- **Entries are funded by selling sweep shares** at execution when cash is short. If the sale does not fill
+  within a few seconds, the entry is dropped rather than sent without cash.
+- **The sweep is not a trade.** Its shares are removed from what the agent, sizing and risk engine see, and
+  their value counts as spendable cash. So they never use up exposure, sector or portfolio-risk limits,
+  and the agent cannot close them.
+- **Breakers ignore the sweep's P&L.** The drawdown kill switch and daily-loss check watch trading equity
+  (equity minus the sweep's gain or loss), so an ordinary market dip does not halt the agent. The account
+  as a whole now moves with the market: expect index-sized drawdowns.
+- Only shares the sweep bought itself count (tracked from its own fills in the ledger). SPYM you bought by
+  hand stays a manual position. If sweep shares disappear at the broker, reconciliation fails and the kill
+  switch engages.
+- The kill switch stops sweep buys. In shadow mode sweep orders are recorded, never sent.
+
+Backtest (baseline agent, $900, 2024-01-02 to 2026-09-25, kill switch on as live):
+
+| | Return | Max drawdown | Last 12 months |
+|---|---|---|---|
+| No sweep | +8.5% | -5.5% | +5.8% |
+| SGOV sweep | +18.3% | -5.3% | +8.2% |
+| SPYM sweep | +60.8% | -14.5% | +47.4% |
+| SPY buy-and-hold | +68.5% | -18.8% | +18.5% |
+
+The SPYM sweep's own contribution is about the market's return on the ~70% it holds. The rest of the
+last-12-months figure is agent trades, which are lumpy at one share each (a few names made most of it),
+so do not count on that part repeating. Check cash settlement rules for your Webull SG account before
+enabling: buying with unsettled sale proceeds and then selling again before settlement can break
+cash-account rules.
+
 ## Setup
 
 ```bash
 cd ~/trading-agent
 uv sync --extra webull
 cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run pytest                # 131 passing
+uv run pytest                # 149 passing
 uv run trading-agent research --broker sim   # offline dry run on synthetic data
 ```
 
@@ -98,6 +134,7 @@ The agent dispatches real-time events to your Telegram bot:
 uv run trading-agent backtest --start 2024-01-02                  # baseline, $1,500, live limits
 uv run trading-agent backtest --start 2024-01-02 --no-halt        # keep going after the kill switch trips
 uv run trading-agent backtest --start 2024-01-02 --no-trailing    # A/B the trailing stop
+uv run trading-agent backtest --start 2024-01-02 --cash 900 --sweep SPYM   # A/B the cash sweep (--no-sweep)
 uv run trading-agent backtest --start 2025-06-02 --agent llm --max-llm-calls 40   # costs money; cached
 ```
 
@@ -105,7 +142,9 @@ uv run trading-agent backtest --start 2025-06-02 --agent llm --max-llm-calls 40 
 stop. Research at each close sees only bars up to that day. Entries fill at the next open as DAY limits.
 Stops, targets and gaps come from the daily range, and when a bar touches both, the stop is assumed first.
 The run prints expectancy in R, win rate, profit factor, drawdown, Sharpe, exit reasons, the most common
-rejection reasons and SPY buy-and-hold, and writes `summary.json`, `trades.csv` and `equity.csv` under
+rejection reasons, the average share of equity invested, and two benchmarks: SPY buy-and-hold (with the
+excess return over it) and SPY held only while above its 200-day average. If the agent cannot beat both
+after LLM costs, its trades add nothing. The run writes `summary.json`, `trades.csv` and `equity.csv` under
 `state/backtests/`. Bars, earnings dates and LLM outputs are cached in `state/backtest_cache/`.
 
 Results are optimistic in three known ways: the universe is today's list, no historical news is

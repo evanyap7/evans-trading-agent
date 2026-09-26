@@ -8,6 +8,8 @@ monitor   (every few minutes)     reconcile -> circuit breakers -> stops / targe
 from __future__ import annotations
 
 import json
+import math
+import time as _time
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
@@ -23,7 +25,10 @@ from .ledger import Ledger
 from .market_calendar import ET, is_regular_session, is_trading_day, to_trading_date
 from .portfolio import size_order, trailed_stop, trailed_stop_short
 from .risk import OpenRisk, RiskContext, evaluate
-from .schemas import AccountState, Evidence, OrderState, Proposal, TradeProposal, utcnow
+from .schemas import TERMINAL_STATES, AccountState, Evidence, OrderState, Proposal, TradeProposal, utcnow
+from .sweep import EMPTY as EMPTY_SWEEP
+from .sweep import PURPOSE as SWEEP
+from .sweep import SweepState, sweep_state, trading_view
 from .verifier import verify
 
 BAR_HISTORY = 260
@@ -59,6 +64,7 @@ class Orchestrator:
         )
         self.kill = KillSwitch(settings.state_dir)
         self.exec = ExecutionEngine(broker, ledger, limits, send_orders=settings.trading_mode == TradingMode.BROKER)
+        self._sweep: SweepState = EMPTY_SWEEP  # refreshed by every _account()
 
     @property
     def sends_real_orders_to_prod(self) -> bool:
@@ -67,9 +73,16 @@ class Orchestrator:
     # -- shared helpers ---------------------------------------------------------------
 
     def _account(self) -> AccountState:
+        """The broker's account as it is (sweep shares included). Also refreshes the sweep's state."""
         acct = self.broker.get_account()
-        self.ledger.snapshot_equity(acct.as_of, to_trading_date(acct.as_of), acct.equity)
+        cs = self.limits.cash_sweep
+        self._sweep = sweep_state(self.ledger, acct, cs.symbol) if cs.enabled else EMPTY_SWEEP
+        self.ledger.snapshot_equity(acct.as_of, to_trading_date(acct.as_of), acct.equity, self._sweep.pnl)
         return acct
+
+    def _view(self, acct: AccountState) -> AccountState:
+        """The account as the agent, sizing and risk engine see it: sweep shares count as cash."""
+        return trading_view(acct, self._sweep, self.limits.cash_sweep.symbol) if self.limits.cash_sweep.enabled else acct
 
     def _refresh_earnings(self, symbols, rep: CycleReport) -> None:
         """Merge broker earnings dates for stocks into the risk engine's events. On failure the stocks
@@ -125,6 +138,10 @@ class Orchestrator:
                 )
                 if not stop_filled:
                     issues.append(f"{sym}: ledger expects {exp_qty} short shares, broker shows {h_qty}")
+        cs = self.limits.cash_sweep
+        if cs.enabled and self._sweep.ledger_qty > held.get(cs.symbol, 0) + 1e-9:
+            issues.append(f"{cs.symbol}: cash sweep expects {self._sweep.ledger_qty:g} shares, "
+                          f"broker shows {held.get(cs.symbol, 0):g}")
         ok = not issues
         self.ledger.append("reconciliation", {"ok": ok, "issues": issues})
         return ok, issues
@@ -161,7 +178,8 @@ class Orchestrator:
             now=now, trading_date=td, account=account, quote=quote, kill_switch_engaged=self.kill.engaged(),
             sends_real_orders_to_prod=self.sends_real_orders_to_prod, require_session=require_session,
             reconciled=reconciled, entries_today=self.ledger.entries_submitted_on(td),
-            start_of_day_equity=self.ledger.start_of_day_equity(td), peak_equity=self.ledger.peak_equity(),
+            start_of_day_equity=_plus(self.ledger.start_of_day_trading_equity(td), self._sweep.pnl),
+            peak_equity=_plus(self.ledger.peak_trading_equity(), self._sweep.pnl),
             decision_already_executed=self.ledger.get_order(client_order_id(decision_id, "ENTRY")) is not None,
             open_risks=self._open_risks(account),
         )
@@ -171,8 +189,9 @@ class Orchestrator:
     def research(self) -> CycleReport:
         rep = CycleReport("research")
         cycle_id = uuid.uuid4().hex
-        account = self._account()
-        reconciled, issues = self.reconcile(account)
+        raw = self._account()
+        reconciled, issues = self.reconcile(raw)
+        account = self._view(raw)
         for i in issues:
             rep.add(f"reconcile: {i}")
 
@@ -311,8 +330,9 @@ class Orchestrator:
         if not is_regular_session(now):
             rep.add("market closed: nothing sent")
             return rep
-        account = self._account()
-        reconciled, issues = self.reconcile(account)
+        raw = self._account()
+        reconciled, issues = self.reconcile(raw)
+        account = self._view(raw)
         rep.notes += [f"reconcile: {i}" for i in issues]
         pending = self.ledger.pending()
         symbols = sorted({self._pending_symbol(r) for r in pending})
@@ -331,8 +351,9 @@ class Orchestrator:
         if closes:
             import time
             time.sleep(2)
-            account = self._account()
-            reconciled, issues = self.reconcile(account)
+            raw = self._account()
+            reconciled, issues = self.reconcile(raw)
+            account = self._view(raw)
 
         for row in entries:
             prop = Proposal.model_validate_json(row["proposal"])
@@ -363,6 +384,10 @@ class Orchestrator:
                 self.ledger.set_pending_status(prop.decision_id, "DROPPED")
                 rep.add(f"{t.symbol}: risk rejected at execution: {', '.join(d.failed_checks)}")
                 continue
+            if not self._fund_from_sweep(sized.notional + self.limits.execution.fee_per_order_usd, today, rep):
+                self.ledger.set_pending_status(prop.decision_id, "DROPPED")
+                rep.add(f"{t.symbol}: dropped at execution: cash sweep could not free the cash in time")
+                continue
             # Direction-aware order submission
             entry_side = "SELL" if t.is_short else "BUY"
             req = OrderRequest(client_order_id=client_order_id(prop.decision_id, "ENTRY"), symbol=t.symbol,
@@ -377,8 +402,75 @@ class Orchestrator:
                                       is_shadow=not self.sends_real_orders_to_prod)
             except Exception:
                 pass
-            account = self._account()  # refresh so the next order sees this one's cash and exposure
+            account = self._view(self._account())  # refresh so the next order sees this one's cash and exposure
+        self._invest_sweep(today, rep)
         return rep
+
+    # -- cash sweep -----------------------------------------------------------------------
+
+    SWEEP_FILL_POLLS = 5  # seconds to wait for a sweep sale to fill before giving up on the entry it funds
+
+    def _sweep_orders_working(self) -> bool:
+        return any(o["purpose"] == SWEEP for o in self.ledger.live_orders())
+
+    def _sweep_order(self, side: str, qty: int, limit: float, today: date, rep: CycleReport) -> tuple[str, OrderState]:
+        decision_id = f"sweep:{today.isoformat()}:{uuid.uuid4().hex[:12]}"
+        coid = client_order_id(decision_id, SWEEP)
+        req = OrderRequest(client_order_id=coid, symbol=self.limits.cash_sweep.symbol, side=side, order_type="LIMIT",
+                           quantity=qty, time_in_force="DAY", limit_price=limit, instrument_type="ETF")
+        state = self.exec.submit(req, decision_id, SWEEP)
+        rep.add(f"cash sweep: {side} {qty} {req.symbol} @ {limit} -> {state.value}")
+        return coid, state
+
+    def _fund_from_sweep(self, need: float, today: date, rep: CycleReport) -> bool:
+        """Make sure real cash covers `need`, selling sweep shares first if it does not."""
+        cs = self.limits.cash_sweep
+        if not cs.enabled:
+            return True  # nothing to sell; the risk engine already checked cash
+        raw = self.broker.get_account()
+        short = need - min(raw.cash, raw.buying_power)
+        if short <= 0:
+            return True
+        if self._sweep.qty <= 0 or self._sweep_orders_working():
+            return False
+        ref = self._exit_price(self.broker.get_quotes([cs.symbol]).get(cs.symbol))
+        if ref is None:
+            rep.add(f"cash sweep: no fresh {cs.symbol} quote to sell into")
+            return False
+        limit = round(ref * (1 - self.limits.execution.price_collar_pct / 100), 2)
+        qty = min(self._sweep.qty, math.ceil((short + self.limits.execution.fee_per_order_usd) / limit))
+        coid, state = self._sweep_order("SELL", qty, limit, today, rep)
+        for _ in range(self.SWEEP_FILL_POLLS):
+            if state in TERMINAL_STATES or state == OrderState.SHADOW:
+                break
+            _time.sleep(1)
+            state = self.exec.sync(coid)
+        raw = self._account()
+        return min(raw.cash, raw.buying_power) >= need
+
+    def _invest_sweep(self, today: date, rep: CycleReport) -> None:
+        """Buy whole sweep shares with cash above the reserve and above what working entries need."""
+        cs, ex = self.limits.cash_sweep, self.limits.execution
+        if not cs.enabled or self.kill.engaged() or not is_regular_session(self.now()):
+            return
+        if self.sends_real_orders_to_prod and not self.limits.live_trading.enabled:
+            return
+        if self._sweep_orders_working():
+            return
+        raw = self._account()
+        committed = sum((o["quantity"] - o["filled_quantity"]) * (o["limit_price"] or 0)
+                        for o in self.ledger.live_orders() if o["purpose"] == "ENTRY")
+        spare = min(raw.cash, raw.buying_power) - cs.reserve_pct / 100 * raw.equity - committed - ex.fee_per_order_usd
+        q = self.broker.get_quotes([cs.symbol]).get(cs.symbol)
+        if (q is None or q.ask <= 0 or q.age_seconds(self.now()) > ex.max_quote_age_seconds
+                or not math.isfinite(q.spread_pct) or q.spread_pct > ex.max_spread_pct):
+            if spare >= cs.min_trade_usd:
+                rep.add(f"cash sweep: no fresh, tight {cs.symbol} quote; ${spare:.2f} left in cash")
+            return
+        limit = round(q.ask * (1 + ex.price_collar_pct / 100), 2)
+        qty = math.floor(spare / limit) if spare > 0 else 0
+        if qty >= 1 and qty * limit >= cs.min_trade_usd:
+            self._sweep_order("BUY", qty, limit, today, rep)
 
     @staticmethod
     def _pending_symbol(row) -> str:
@@ -534,9 +626,11 @@ class Orchestrator:
         if not reconciled:
             self.kill.engage("reconciliation failure: " + "; ".join(issues)[:300], by="monitor")
             rep.add("KILL SWITCH ENGAGED: " + "; ".join(issues))
-        peak = self.ledger.peak_equity()
-        if peak and (account.equity / peak - 1) * 100 <= -self.limits.account.max_drawdown_pct:
-            self.kill.engage(f"drawdown limit breached: equity {account.equity:.2f} vs peak {peak:.2f}", by="monitor")
+        peak = self.ledger.peak_trading_equity()
+        trading_equity = account.equity - self._sweep.pnl  # the sweep's market moves never trip the breaker
+        if peak and (trading_equity / peak - 1) * 100 <= -self.limits.account.max_drawdown_pct:
+            self.kill.engage(f"drawdown limit breached: trading equity {trading_equity:.2f} vs peak {peak:.2f}",
+                             by="monitor")
             rep.add("KILL SWITCH ENGAGED: drawdown limit")
         if self.kill.engaged():
             self._cancel_working_entries(rep)
@@ -607,3 +701,7 @@ class Orchestrator:
                     pass
         rep.add(f"equity {account.equity:.2f}, {len(trades)} open system trades, reconciled={reconciled}")
         return rep
+
+
+def _plus(x: float | None, y: float) -> float | None:
+    return None if x is None else x + y

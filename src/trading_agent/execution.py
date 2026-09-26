@@ -150,6 +150,10 @@ class ExecutionEngine:
 
     def _on_fill(self, row, qty: float, px: float) -> None:
         decision_id = row["decision_id"]
+        if row["purpose"] == "SWEEP":  # cash sweep: not a trade; the orders table is its bookkeeping
+            self.ledger.append("sweep_fill", {"symbol": row["symbol"], "side": row["side"], "qty": qty, "price": px},
+                               decision_id=decision_id, client_order_id=row["client_order_id"])
+            return
         if row["purpose"] == "ENTRY":
             pa = self.ledger.db.execute("SELECT proposal FROM pending_actions WHERE decision_id=?", (decision_id,)).fetchone()
             if pa is None:
