@@ -40,6 +40,8 @@ def send_telegram(text: str) -> bool:
     token, chat_id = get_telegram_config()
     if not token or not chat_id:
         return False
+    if os.environ.get("TRADING_AGENT_PAPER"):
+        text = "📝 [PAPER — no real money]\n" + text
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     # Markdown first; if Telegram rejects the formatting (an unbalanced `_` or `*` in a symbol, reason
     # or LLM thesis), resend as plain text so a critical alert is never silently lost.
