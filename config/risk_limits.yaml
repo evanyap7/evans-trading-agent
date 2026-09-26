@@ -4,7 +4,7 @@
 live_trading:
   enabled: true               # real orders need: this true + WEBULL_ENVIRONMENT=prod + TRADING_MODE=broker
   allowed_instruments: [EQUITY, ETF]
-  permit_shorting: false       # flip to true after shadow-mode validation of short pipeline
+  permit_shorting: true        # active: short selling pipeline enabled to profit from market breakdowns
   permit_margin: false
   permit_options: false
   # true: the agent may also sell holdings you bought by hand (capital rotation). Exits still need
@@ -16,17 +16,17 @@ account:
   max_sector_pct: 60
   max_total_exposure_pct: 100 # gross long exposure / equity
   max_risk_per_trade_pct: 2.0 # calibrated for whole-share execution on accounts under $1,500
-  max_portfolio_risk_pct: 6.0 # sum of per-trade risk across open positions: never more than 6% at risk at once
+  max_portfolio_risk_pct: 10.0 # sum of per-trade risk across open positions: allows holding multiple concurrent positions
   unknown_stop_risk_pct: 5    # assumed loss for positions with no recorded stop
   max_daily_loss_pct: 2       # whole-account equity incl. manual holdings; blocks new entries only
   max_drawdown_pct: 5
-  max_new_trades_per_day: 5
-  max_order_value_usd: 1000   # allows buying whole shares of large-cap leaders
+  max_new_trades_per_day: 8   # up to 8 entries per day across expanded universe
+  max_order_value_usd: 1500   # allows buying/shorting whole shares of large-cap leaders
   max_adv_participation_pct: 2
   daily_profit_target_usd: 10.0 # reporting benchmark only; it never triggers an exit or reaches the LLM
   # Short-selling exposure caps — only evaluated when permit_shorting is on
-  max_short_exposure_pct: 30  # never more than 30% of equity sold short
-  max_gross_exposure_pct: 130 # long + |short| capped at 130% of equity
+  max_short_exposure_pct: 50  # allows up to 50% of equity in short positions
+  max_gross_exposure_pct: 150 # long + |short| capped at 150% of equity
 
 signal:
   min_confidence: 0.50
