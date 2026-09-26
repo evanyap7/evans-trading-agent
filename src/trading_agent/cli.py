@@ -11,7 +11,7 @@
     trading-agent unkill
     trading-agent verify-ledger            check the audit hash chain
     trading-agent calibration              the agent's stated confidence vs actual results on closed trades
-    trading-agent backtest --start 2024-01-01 [--end ...] [--agent llm] [--cash 1500]
+    trading-agent backtest --start 2024-01-01 [--end ...] [--agent llm] [--cash 1500] [--sweep SPYM]
                                            replay history through the live pipeline
 
 Add `--broker sim` to any cycle to run against synthetic data with no credentials.
@@ -146,6 +146,10 @@ def main(argv: list[str] | None = None) -> None:
                     help="keep trading after the drawdown kill switch would have tripped (it is still reported)")
     bt.add_argument("--ignore-earnings", action="store_true",
                     help="allow stocks with no known earnings date (live blocks them)")
+    sweep = bt.add_mutually_exclusive_group()
+    sweep.add_argument("--sweep", metavar="SYMBOL", default=None,
+                       help="park idle cash in this ETF (e.g. SPYM, SGOV), overriding cash_sweep in the config")
+    sweep.add_argument("--no-sweep", action="store_true", help="leave idle cash uninvested, whatever the config says")
     bt.add_argument("--max-llm-calls", type=int, default=40,
                     help="refuse to make more than this many uncached LLM calls (each costs money)")
     bt.add_argument("--out", type=Path, default=None, help="directory for summary.json, trades.csv, equity.csv")
@@ -200,8 +204,12 @@ def _backtest(args, settings) -> None:
     if args.ignore_earnings:
         limits = limits.model_copy(update={"events": limits.events.model_copy(
             update={"require_earnings_data_for_stocks": False})})
+    if args.sweep or args.no_sweep:
+        cs = limits.cash_sweep.model_copy(update={"enabled": not args.no_sweep,
+                                                  **({"symbol": args.sweep.upper()} if args.sweep else {})})
+        limits = limits.model_copy(update={"cash_sweep": cs})
     cache_dir = settings.state_dir / "backtest_cache"
-    symbols = sorted(universe.symbols)
+    symbols = sorted(set(universe.symbols) | ({limits.cash_sweep.symbol} if limits.cash_sweep.enabled else set()))
     print(f"loading daily bars for {len(symbols)} symbols ...")
     bars = load_bars(symbols, args.start, end, cache_dir)
     stocks = [s for s, sec in universe.symbols.items() if sec.type == "EQUITY"]

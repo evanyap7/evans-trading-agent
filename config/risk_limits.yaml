@@ -61,6 +61,15 @@ execution:
   trail_distance_r: 1.5       # ...by 1.5R, so winners run instead of being capped
   trail_min_step_r: 0.25      # ignore smaller moves (each move replaces the broker-side stop)
 
+cash_sweep:
+  # Park idle cash in a broad ETF instead of leaving it uninvested; sold again to fund entries.
+  # Excluded from exposure / risk limits, and the drawdown and daily-loss breakers ignore its P&L.
+  # Backtest with `trading-agent backtest --sweep SPYM` and run in shadow mode before enabling.
+  enabled: false
+  symbol: SPYM                # S&P 500 at ~$90/share (whole shares on a small account); SGOV = T-bills
+  reserve_pct: 5.0            # of equity, always left in cash
+  min_trade_usd: 50           # smaller top-ups are not worth an order
+
 events:
   earnings_blackout_days: 2
   # Dates come from Webull's earnings calendar each cycle (config/events.yaml overrides).

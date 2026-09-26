@@ -61,6 +61,8 @@ def evaluate(order: SizedOrder, instrument_type: str, holding_period_days: int, 
     checks["account_fresh"] = (ctx.now - ctx.account.as_of).total_seconds() <= ex.max_account_age_seconds
     checks["broker_reconciled"] = ctx.reconciled
     checks["not_duplicate_decision"] = not ctx.decision_already_executed
+    # The cash sweep's ETF is not a trade: an entry there would mix the two and dodge the sweep's bookkeeping.
+    checks["not_cash_sweep_symbol"] = not (limits.cash_sweep.enabled and order.symbol == limits.cash_sweep.symbol)
     checks["no_existing_exposure_in_symbol"] = not any(r.symbol == order.symbol for r in ctx.open_risks)
     checks["positive_equity"] = eq > 0
 
