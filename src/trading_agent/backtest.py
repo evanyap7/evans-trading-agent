@@ -426,7 +426,10 @@ class Backtester:
         try:
             output = self.cache.propose(self.agent, ctx) if self.cache else self.agent.propose(ctx)
         except Exception as e:  # same as live: a failed model call is a NO_TRADE
-            self.result.rejections[f"agent error: {type(e).__name__}"] += 1
+            key = f"agent error: {type(e).__name__}"
+            if key not in self.result.rejections:  # surface the first message of each kind, not just a count
+                self.result.warnings.append(f"{key}: {str(e)[:200]}")
+            self.result.rejections[key] += 1
             return
 
         cycle_ev = {e.evidence_id: e.symbol for e in evidence}
