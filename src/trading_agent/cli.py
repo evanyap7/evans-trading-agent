@@ -153,6 +153,21 @@ def main(argv: list[str] | None = None) -> None:
     bt.add_argument("--max-llm-calls", type=int, default=40,
                     help="refuse to make more than this many uncached LLM calls (each costs money)")
     bt.add_argument("--out", type=Path, default=None, help="directory for summary.json, trades.csv, equity.csv")
+    # Databento institutional market data commands
+    db_p = sub.add_parser("databento", help="inspect Databento market data connection, datasets, and query costs")
+    db_sub = db_p.add_subparsers(dest="db_cmd", required=True)
+    db_sub.add_parser("probe", help="check Databento API key, connectivity, and dataset catalog")
+    db_cost = db_sub.add_parser("cost", help="estimate query cost in USD before downloading")
+    db_cost.add_argument("--symbols", required=True, help="comma-separated tickers, e.g. SPY,AAPL")
+    db_cost.add_argument("--start", required=True, type=_date, help="start date YYYY-MM-DD")
+    db_cost.add_argument("--end", default=None, type=_date, help="end date YYYY-MM-DD")
+    db_cost.add_argument("--dataset", default=None, help="Databento dataset, default EQUS.SUMMARY")
+    db_bars = db_sub.add_parser("bars", help="download and display historical bars from Databento")
+    db_bars.add_argument("--symbols", required=True, help="comma-separated tickers, e.g. SPY,AAPL")
+    db_bars.add_argument("--start", required=True, type=_date, help="start date YYYY-MM-DD")
+    db_bars.add_argument("--end", default=None, type=_date, help="end date YYYY-MM-DD")
+    db_bars.add_argument("--dataset", default=None, help="Databento dataset, default EQUS.SUMMARY")
+
     args = p.parse_args(argv)
 
     settings = load_settings()
@@ -181,6 +196,8 @@ def main(argv: list[str] | None = None) -> None:
         _status(settings)
     elif args.cmd == "calibration":
         _calibration(settings)
+    elif args.cmd == "databento":
+        _databento(args)
     elif args.cmd == "backtest":
         socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
         _backtest(args, settings)
@@ -281,6 +298,50 @@ def _status(settings) -> None:
     print("recent events:")
     for e in led.events(limit=15):
         print(f"  {e['ts'][:19]} {e['kind']:<16} {e['payload'][:110]}")
+
+
+def _databento(args) -> None:
+    from datetime import date
+    from .databento_data import DatabentoClient
+
+    client = DatabentoClient()
+    if not client.is_available:
+        print("Databento is not configured. Set DATABENTO_API_KEY in your .env file.")
+        print("Sign up and get your API key from: https://databento.com/portal/keys")
+        return
+
+    if args.db_cmd == "probe":
+        print("Databento Client: CONNECTED")
+        print(f"Default Dataset: {client.default_dataset}")
+        print(f"Cost Limit: ${client.cost_limit_usd:.2f} USD")
+        try:
+            datasets = client.list_datasets()
+            print(f"Available Datasets ({len(datasets)}): {', '.join(datasets[:8])}...")
+            schemas = client.list_schemas()
+            print(f"Available Schemas for {client.default_dataset}: {', '.join(schemas)}")
+        except Exception as e:
+            print(f"Error querying Databento metadata: {e}")
+    elif args.db_cmd == "cost":
+        symbols = [s.strip().upper() for s in args.symbols.split(",")]
+        end = args.end or date.today()
+        try:
+            cost = client.estimate_cost(symbols, args.start, end, dataset=args.dataset)
+            print(f"Estimated query cost for {symbols} ({args.start} to {end}): ${cost:.4f} USD")
+        except Exception as e:
+            print(f"Cost estimate failed: {e}")
+    elif args.db_cmd == "bars":
+        symbols = [s.strip().upper() for s in args.symbols.split(",")]
+        end = args.end or date.today()
+        try:
+            bars = client.get_daily_bars(symbols, args.start, end, dataset=args.dataset)
+            for s, b_list in bars.items():
+                print(f"{s}: {len(b_list)} bars loaded.")
+                if b_list:
+                    first, last = b_list[0], b_list[-1]
+                    print(f"  First: {first.ts.date()} close={first.close}")
+                    print(f"  Last:  {last.ts.date()} close={last.close}")
+        except Exception as e:
+            print(f"Failed to load bars: {e}")
 
 
 if __name__ == "__main__":
