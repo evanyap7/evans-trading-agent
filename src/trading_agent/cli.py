@@ -86,6 +86,10 @@ def _run_cycle(args) -> None:
 def _build(args) -> Orchestrator:
     settings = load_settings()
     limits, universe, events = load_risk_limits(), load_universe(), load_events()
+    if os.environ.get("CASH_SWEEP_ENABLED", "").lower() in ("1", "true", "yes"):
+        from .config import CashSweep
+        sym = os.environ.get("CASH_SWEEP_SYMBOL", "SPYM")
+        limits = limits.model_copy(update={"cash_sweep": CashSweep(enabled=True, symbol=sym, reserve_pct=5.0)})
     if args.broker == "sim":
         broker = _sim_broker(universe)
         settings = settings.model_copy(update={"state_dir": settings.state_dir / "sim"})

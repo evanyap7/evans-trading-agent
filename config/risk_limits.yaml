@@ -67,7 +67,7 @@ cash_sweep:
   # Backtest with `trading-agent backtest --sweep SPYM` and run in shadow mode before enabling.
   enabled: false
   symbol: SPYM                # S&P 500 at ~$90/share (whole shares on a small account); SGOV = T-bills
-  reserve_pct: 5.0            # of equity, always left in cash
+  reserve_pct: 5.0            # of equity, always left in cash (95% invested)
   min_trade_usd: 50           # smaller top-ups are not worth an order
 
 events:
