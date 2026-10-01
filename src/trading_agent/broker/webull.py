@@ -251,6 +251,18 @@ class WebullBroker:
                 return out
         except Exception:
             pass
+        # Try Databento before yfinance if configured
+        try:
+            from ..databento_data import DatabentoClient
+            db_client = DatabentoClient()
+            if db_client.is_available:
+                today = date.today()
+                start_d = today - timedelta(days=int(count * 1.6))
+                db_bars = db_client.get_daily_bars(symbols, start_d, today)
+                if len(db_bars) == len(symbols):
+                    return db_bars
+        except Exception:
+            pass
         return self._yfinance_bars(symbols, count)
 
     # -- events ---------------------------------------------------------------------

@@ -541,6 +541,23 @@ def load_bars(symbols: list[str], start: date, end: date, cache_dir: Path) -> di
         else:
             missing.append(sym)
     if missing:
+        # Check if Databento is available and enabled
+        if os.environ.get("DATA_SOURCE", "").lower() == "databento":
+            try:
+                from .databento_data import DatabentoClient
+                db_client = DatabentoClient()
+                if db_client.is_available:
+                    db_bars = db_client.get_daily_bars(missing, first, end + timedelta(days=1), cache_dir=cache_dir)
+                    for sym, bars in db_bars.items():
+                        if bars:
+                            out[sym] = bars
+                            (cache_dir / f"bars_{sym}_{first}_{end}.json").write_text(
+                                json.dumps([b.model_dump(mode="json") for b in bars]))
+                    missing = [s for s in missing if s not in out]
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Databento load_bars failed, falling back to yfinance: %s", e)
+
         import yfinance as yf
 
         df = yf.download(missing, start=first.isoformat(), end=(end + timedelta(days=1)).isoformat(),

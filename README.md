@@ -37,11 +37,12 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Broker-side GTC stop-loss placed after each fill (re-armed if missing) | `execution.py` |
 | Append-only, hash-chained ledger (SQLite) | `ledger.py` |
 | Reconciliation, kill switch (auto + operator), drawdown breaker | `orchestrator.py`, `killswitch.py` |
-| Webull SG adapter (official SDK v3.0.2 + resilient yfinance fallback, UAT + prod) | `broker/webull.py` |
+| Databento market data adapter (Historical OHLCV, Live streaming, symbology & cost guard) | `databento_data.py` ([docs](docs/databento_integration.md)) |
+| Webull SG adapter (official SDK v3.0.2 + resilient yfinance / Databento fallback, UAT + prod) | `broker/webull.py` |
 | Simulated broker for tests and offline runs | `broker/simulated.py` |
-| 83 unit and integration tests covering the blueprint's failure list | `tests/` |
+| 160+ unit and integration tests covering the blueprint's failure list | `tests/` |
 
-**Not built yet:** offline backtester replay engine (Phase 3), Postgres/Timescale database backend,
+**Not built yet:** Postgres/Timescale database backend,
 web dashboard, real-time WebSocket order-event stream (gRPC/polling used instead), options (Phase 7;
 Webull's own MCP config marks SG as `supports_options=False`).
 
