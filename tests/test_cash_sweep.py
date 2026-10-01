@@ -190,3 +190,15 @@ def test_backtest_reports_trend_benchmark():
     # SPY rises every day, so the 200-day filter stays invested and matches buy-and-hold closely.
     assert s["trend_benchmark_return_pct"] == pytest.approx(s["benchmark_return_pct"], abs=0.5)
     assert "excess_vs_benchmark_pct" in s and "avg_invested_pct" in s
+
+
+def test_small_cash_balance_leaves_the_sweep_idle(tmp_path):
+    """Real-account shape: US$90.76 cash on ~US$483 of equity. Spare cash after the 5% reserve is under
+    one SPYM share, so nothing is bought, and nothing is sold either."""
+    broker = broker_with_sweep_quote(cash=90.76)
+    for sym, qty, last in (("SMCI", 1, 41.58), ("PLTR", 1, 188.82), ("XOM", 1, 161.40)):
+        broker.positions[sym] = Position(symbol=sym, quantity=qty, avg_cost=last, last_price=last)
+    orch = make_orchestrator(tmp_path, broker, ScriptedAgent(no_ideas), IN_SESSION, limits=sweep_limits())
+    orch.execute()
+    assert SYM not in broker.positions and broker.place_calls == 0
+    assert round(broker.cash, 2) == 90.76
