@@ -154,6 +154,11 @@ class WebullBroker:
         rows = _unwrap_list(_json(self._call_with_retry(lambda: self._trade.account_v2.get_account_position(self.account_id))), "data", "holdings")
         out = []
         for r in rows:
+            # Exclude non-USD assets (e.g. SGD mutual funds) from US equities/ETF trading book
+            if r.get("currency") and r.get("currency") != "USD":
+                continue
+            if r.get("instrument_type") == "MUTUAL_FUND":
+                continue
             qty = _f(r.get("quantity"))
             if qty and r.get("symbol"):
                 last = _f(r.get("last_price")) or _f(r.get("market_value")) / qty
