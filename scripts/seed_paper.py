@@ -21,7 +21,7 @@ from datetime import datetime
 from trading_agent.broker.paper import PaperBroker
 from trading_agent.config import load_settings
 
-CASH_USD = 90.76
+CASH_USD = 705.76  # updated with $800 SGD deposit (~$615 USD)
 # symbol, quantity, average cost, last price (USD), from the Webull app on 1 Oct 2026
 POSITIONS = [
     ("SMCI", 1, 41.50, 41.58),
