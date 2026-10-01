@@ -27,7 +27,8 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Real-time multi-source financial news & macro evidence (Bloomberg, WSJ, Economist, Reuters, NYSE) | `news.py` |
 | Telegram personal assistant bot alerts & 9:00 AM daily executive morning briefing | `alerts.py` |
 | Rule-based momentum baseline, the benchmark the LLM has to beat | `agents.py` |
-| Point-in-time price features as citable evidence | `features.py` |
+| Quantitative Mathematics Engine: descriptive stats, dispersion, Bayes, Monte Carlo, linear algebra, linear regression & momentum calculus | `math_quant.py` ([docs](docs/algorithmic_trading_maths.md)) |
+| Point-in-time price features & quantitative evidence | `features.py` |
 | Quant verifier: grounding, freshness, price collar, ATR stop, R:R, probability edge vs break-even, net edge after costs | `verifier.py` |
 | Position sizing from fractional Kelly, risk budget and caps (the LLM never picks quantity) | `portfolio.py` |
 | Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |

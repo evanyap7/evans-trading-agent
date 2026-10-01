@@ -12,6 +12,13 @@ import math
 from datetime import datetime
 from statistics import fmean, pstdev
 
+from .math_quant import (
+    dispersion_metrics,
+    linear_regression,
+    median,
+    momentum_calculus,
+    moving_average_crossover,
+)
 from .schemas import Bar, Evidence, Quote
 
 
@@ -43,6 +50,14 @@ def price_features(bars: list[Bar]) -> dict[str, float]:
     vols = [b.volume for b in bars[-20:]]
     high_252 = max(b.high for b in bars[-252:])
     low_252 = min(b.low for b in bars[-252:])
+
+    # Quantitative mathematics features (QuantInsti curriculum)
+    crossover = moving_average_crossover(closes, 20, 50)
+    disp20 = dispersion_metrics(closes[-20:])
+    linreg20 = linear_regression(closes[-20:])
+    m_calc20 = momentum_calculus(closes, window=20)
+    med20 = median(closes[-20:])
+
     return {
         "close": round(c, 4),
         "ret_5d_pct": round(ret(5), 2),
@@ -52,7 +67,19 @@ def price_features(bars: list[Bar]) -> dict[str, float]:
         "dist_sma20_pct": round(_pct(c, sma20), 2),
         "dist_sma50_pct": round(_pct(c, sma50), 2),
         "dist_sma200_pct": round(_pct(c, sma200), 2),
+        "sma20_above_sma50": float(crossover.is_bullish),
+        "sma20_sma50_crossover_ratio_pct": crossover.crossover_ratio,
         "sma50_above_sma200": float(sma50 > sma200) if not math.isnan(sma200) else math.nan,
+        "median_20d": round(med20, 4),
+        "dist_median_20d_pct": round(_pct(c, med20), 2),
+        "range_20d_pct": disp20.range_pct,
+        "quartile_dev_20d_pct": disp20.quartile_deviation_pct,
+        "mad_20d_pct": disp20.mad_pct,
+        "linreg_slope_20d_pct": linreg20.slope_annualized_pct,
+        "linreg_r2_20d": linreg20.r_squared,
+        "price_velocity_20d": m_calc20.velocity,
+        "price_acceleration_20d": m_calc20.acceleration,
+        "is_momentum_accelerating": float(m_calc20.is_accelerating),
         "atr14": round(a14, 4),
         "atr14_pct": round(a14 / c * 100, 2),
         "realized_vol_20d_ann_pct": round(pstdev(daily) * math.sqrt(252) * 100, 2) if len(daily) >= 10 else math.nan,
