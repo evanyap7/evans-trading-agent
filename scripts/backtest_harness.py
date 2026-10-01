@@ -118,8 +118,14 @@ def cmd_download(args: argparse.Namespace) -> None:
     print(f"Successfully loaded and cached {loaded}/{len(symbols)} symbols in {CACHE_DIR}.")
 
 
-def _run_backtest_instance(agent_name: str, start_d: date, end_d: date, cash: float,
-                           sweep_sym: str | None = None) -> dict:
+def _run_backtest_instance(
+    agent_name: str,
+    start_d: date,
+    end_d: date,
+    cash: float,
+    sweep_sym: str | None = None,
+    max_llm_calls: int = 50,
+) -> dict:
     universe_path = TOP100_CONFIG if TOP100_CONFIG.exists() else None
     univ = load_universe(universe_path)
     symbols = sorted(univ.symbols.keys())
@@ -131,10 +137,15 @@ def _run_backtest_instance(agent_name: str, start_d: date, end_d: date, cash: fl
     if sweep_sym:
         limits = limits.model_copy(update={"cash_sweep": CashSweep(enabled=True, symbol=sweep_sym, reserve_pct=5.0)})
 
-    from trading_agent.backtest import load_earnings_history
+    from trading_agent.backtest import AgentOutputCache, load_earnings_history
     earnings_hist = load_earnings_history(symbols, CACHE_DIR)
 
     agent = TieredResearchAgent() if agent_name == "llm" else BaselineMomentumAgent()
+    cache = (
+        AgentOutputCache(CACHE_DIR / "agent_outputs" / agent.model.replace("/", "_"), max_new_calls=max_llm_calls)
+        if agent_name == "llm"
+        else None
+    )
 
     bt = Backtester(
         bars=bars,
@@ -145,6 +156,7 @@ def _run_backtest_instance(agent_name: str, start_d: date, end_d: date, cash: fl
         end=end_d,
         starting_cash=cash,
         earnings_history=earnings_hist,
+        output_cache=cache,
         halt_on_kill_switch=False,
     )
     res = bt.run()
@@ -156,7 +168,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     start_d = _parse_date(args.start)
     end_d = _parse_date(args.end)
     print(f"Running 2-Year Backtest ({args.agent.upper()}) from {start_d} to {end_d}...")
-    s = _run_backtest_instance(args.agent, start_d, end_d, args.cash, args.sweep)
+    s = _run_backtest_instance(args.agent, start_d, end_d, args.cash, args.sweep, max_llm_calls=args.max_llm_calls)
 
     print("\n" + "=" * 50)
     print(f"  2-YEAR BACKTEST SUMMARY: {args.agent.upper()}")
@@ -191,17 +203,25 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 
 def cmd_compare(args: argparse.Namespace) -> None:
-    """Week 2: Run parallel backtests to isolate Claude's contribution vs Quantitative Baseline."""
+    """Week 2: Run concurrent parallel backtests to isolate Claude's contribution vs Quantitative Baseline."""
+    import concurrent.futures
+
     start_d = _parse_date(args.start)
     end_d = _parse_date(args.end)
-    print(f"Running Parallel Comparison (Week 2): Claude LLM vs Quantitative Baseline...")
-    print(f"Window: {start_d} to {end_d} | Starting Cash: ${args.cash:,.2f}")
+    print(f"Launching Concurrent Parallel Backtests (Week 2): Claude LLM vs Quantitative Baseline...")
+    print(f"Window: {start_d} to {end_d} | Starting Cash: ${args.cash:,.2f} | Max LLM Calls: {args.max_llm_calls}")
 
-    print("\n[1/2] Replaying Test B: Quantitative Baseline...")
-    base_res = _run_backtest_instance("baseline", start_d, end_d, args.cash, args.sweep)
+    print("\nStarting Test A (Claude LLM) and Test B (Baseline) simultaneously across worker threads...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        future_base = executor.submit(
+            _run_backtest_instance, "baseline", start_d, end_d, args.cash, args.sweep, max_llm_calls=0
+        )
+        future_llm = executor.submit(
+            _run_backtest_instance, "llm", start_d, end_d, args.cash, args.sweep, max_llm_calls=args.max_llm_calls
+        )
 
-    print("\n[2/2] Replaying Test A: Claude LLM System...")
-    llm_res = _run_backtest_instance("llm", start_d, end_d, args.cash, args.sweep)
+        base_res = future_base.result()
+        llm_res = future_llm.result()
 
     # Scorecard
     llm_wr = llm_res.get("win_rate_pct") or 0.0
@@ -262,6 +282,7 @@ def main() -> None:
     rn.add_argument("--end", default="2026-09-30", help="end date YYYY-MM-DD")
     rn.add_argument("--cash", type=float, default=1500.0, help="starting cash USD")
     rn.add_argument("--sweep", default=None, help="cash sweep ETF symbol, e.g. SPYM")
+    rn.add_argument("--max-llm-calls", type=int, default=50, help="max uncached LLM calls budget")
 
     # Compare
     cmp = sub.add_parser("compare", help="run parallel Test A vs Test B scorecard")
@@ -269,6 +290,7 @@ def main() -> None:
     cmp.add_argument("--end", default="2026-09-30", help="end date YYYY-MM-DD")
     cmp.add_argument("--cash", type=float, default=1500.0, help="starting cash USD")
     cmp.add_argument("--sweep", default=None, help="cash sweep ETF symbol, e.g. SPYM")
+    cmp.add_argument("--max-llm-calls", type=int, default=50, help="max uncached LLM calls budget")
 
     args = p.parse_args()
     if args.cmd == "smoke":
