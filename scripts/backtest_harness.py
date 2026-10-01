@@ -33,6 +33,10 @@ from typing import Sequence
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from dotenv import load_dotenv
+
+load_dotenv()  # searches upward from this file, so a worktree under the repo finds the repo's .env
+
 from trading_agent.agents import BaselineMomentumAgent, TieredResearchAgent
 from trading_agent.backtest import Backtester, load_bars
 from trading_agent.config import (
@@ -160,7 +164,11 @@ def _run_backtest_instance(
         halt_on_kill_switch=False,
     )
     res = bt.run()
-    return res.summary()
+    summary = res.summary()
+    errors = {k: v for k, v in res.rejections.items() if k.startswith("agent error")}
+    if agent_name == "llm" and errors and not summary.get("proposals"):
+        raise RuntimeError(f"LLM agent produced no proposals; every cycle failed: {errors}. {res.warnings[:2]}")
+    return summary
 
 
 def cmd_run(args: argparse.Namespace) -> None:
