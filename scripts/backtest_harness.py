@@ -54,6 +54,61 @@ from trading_agent.schemas import Bar
 
 TOP100_CONFIG = CONFIG_DIR / "universe_top100.yaml"
 CACHE_DIR = PROJECT_ROOT / "state" / "backtest_cache"
+LEDGER = CACHE_DIR / "llm_spend.jsonl"
+PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-haiku-4-5": (1.0, 5.0)}  # USD per MTok (input, output)
+SEED_USD = 13.0  # spend the operator reported before the ledger existed
+
+
+class SpendGuardStop(BaseException):
+    """Stops the whole run. BaseException so Backtester's `except Exception` can't turn it into a NO_TRADE day."""
+
+
+def _ledger_total() -> float:
+    if not LEDGER.exists():
+        LEDGER.write_text(json.dumps({"note": "seed: spend before the ledger existed", "cost": SEED_USD}) + "\n")
+    return sum(json.loads(ln).get("cost", 0.0) for ln in LEDGER.read_text().splitlines() if ln.strip())
+
+
+def _install_spend_guard(cap_usd: float, max_consecutive_failures: int = 3) -> None:
+    """Log every billed LLM call to LEDGER; refuse calls past the cap; abort when a model keeps failing."""
+    import threading
+
+    from anthropic.resources.beta.messages import Messages
+
+    lock = threading.Lock()
+    fails: dict[str, int] = {}
+    orig = Messages.parse
+
+    def log(entry: dict) -> None:
+        with LEDGER.open("a") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), **entry}) + "\n")
+
+    def guarded(self, *a, **kw):
+        model = kw.get("model", "?")
+        with lock:
+            spent = _ledger_total()
+            if spent >= cap_usd:
+                raise SpendGuardStop(f"LLM spend cap reached: ${spent:.2f} >= ${cap_usd:.2f} (ledger: {LEDGER})")
+        try:
+            r = orig(self, *a, **kw)
+        except Exception as e:
+            with lock:
+                fails[model] = fails.get(model, 0) + 1
+                log({"model": model, "ok": False, "cost": 0.0, "error": f"{type(e).__name__}: {str(e)[:150]}"})
+                if fails[model] >= max_consecutive_failures:
+                    raise SpendGuardStop(f"{model} failed {fails[model]} calls in a row; last: {type(e).__name__}") from e
+            raise
+        u = r.usage
+        pin, pout = PRICES.get(model, (5.0, 25.0))  # unknown model: assume the dearer tier
+        cost = (u.input_tokens * pin + u.output_tokens * pout
+                + (getattr(u, "cache_read_input_tokens", 0) or 0) * pin * 0.1
+                + (getattr(u, "cache_creation_input_tokens", 0) or 0) * pin * 1.25) / 1e6
+        with lock:
+            fails[model] = 0
+            log({"model": model, "ok": True, "in": u.input_tokens, "out": u.output_tokens, "cost": round(cost, 5)})
+        return r
+
+    Messages.parse = guarded
 
 
 def _parse_date(s: str) -> date:
@@ -145,6 +200,9 @@ def _run_backtest_instance(
     earnings_hist = load_earnings_history(symbols, CACHE_DIR)
 
     agent = TieredResearchAgent() if agent_name == "llm" else BaselineMomentumAgent()
+    if agent_name == "llm":  # default is 10 min x 3 attempts per call; a dead socket would stall a day for 30 min
+        agent.client = agent.client.with_options(timeout=240.0)
+        agent.strategist.client = agent.strategist.client.with_options(timeout=240.0)
     cache = (
         AgentOutputCache(CACHE_DIR / "agent_outputs" / agent.model.replace("/", "_"), max_new_calls=max_llm_calls)
         if agent_name == "llm"
@@ -291,6 +349,7 @@ def main() -> None:
     rn.add_argument("--cash", type=float, default=1500.0, help="starting cash USD")
     rn.add_argument("--sweep", default=None, help="cash sweep ETF symbol, e.g. SPYM")
     rn.add_argument("--max-llm-calls", type=int, default=50, help="max uncached LLM calls budget")
+    rn.add_argument("--max-spend-usd", type=float, default=20.0, help="hard cap on cumulative LLM spend (ledger total)")
 
     # Compare
     cmp = sub.add_parser("compare", help="run parallel Test A vs Test B scorecard")
@@ -299,16 +358,25 @@ def main() -> None:
     cmp.add_argument("--cash", type=float, default=1500.0, help="starting cash USD")
     cmp.add_argument("--sweep", default=None, help="cash sweep ETF symbol, e.g. SPYM")
     cmp.add_argument("--max-llm-calls", type=int, default=50, help="max uncached LLM calls budget")
+    cmp.add_argument("--max-spend-usd", type=float, default=20.0, help="hard cap on cumulative LLM spend (ledger total)")
 
     args = p.parse_args()
-    if args.cmd == "smoke":
-        cmd_smoke(args)
-    elif args.cmd == "download":
-        cmd_download(args)
-    elif args.cmd == "run":
-        cmd_run(args)
-    elif args.cmd == "compare":
-        cmd_compare(args)
+    cap = getattr(args, "max_spend_usd", 20.0)
+    _install_spend_guard(cap)
+    try:
+        if args.cmd == "smoke":
+            cmd_smoke(args)
+        elif args.cmd == "download":
+            cmd_download(args)
+        elif args.cmd == "run":
+            cmd_run(args)
+        elif args.cmd == "compare":
+            cmd_compare(args)
+    except SpendGuardStop as e:
+        print(f"\nSTOPPED: {e}")
+        sys.exit(2)
+    finally:
+        print(f"LLM spend ledger: ${_ledger_total():.2f} of ${cap:.2f} cap ({LEDGER})")
 
 
 if __name__ == "__main__":
