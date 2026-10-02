@@ -1,0 +1,135 @@
+# Top 100 liquid US stocks & ETFs for 2-year quant backtest validation
+symbols:
+  # Benchmark & Broad Market ETFs
+  SPY:   {type: ETF, sector: Broad Market}
+  QQQ:   {type: ETF, sector: Broad Market}
+  IWM:   {type: ETF, sector: Broad Market}
+  DIA:   {type: ETF, sector: Broad Market}
+  SPYM:  {type: ETF, sector: Broad Market}
+  XLK:   {type: ETF, sector: Technology}
+  XLF:   {type: ETF, sector: Financials}
+  XLE:   {type: ETF, sector: Energy}
+  XLV:   {type: ETF, sector: Health Care}
+  XLI:   {type: ETF, sector: Industrials}
+  XLY:   {type: ETF, sector: Consumer Discretionary}
+  XLP:   {type: ETF, sector: Consumer Staples}
+  XLU:   {type: ETF, sector: Utilities}
+  SMH:   {type: ETF, sector: Technology}
+
+  # Technology & Semiconductors
+  NVDA:  {type: EQUITY, sector: Technology}
+  AAPL:  {type: EQUITY, sector: Technology}
+  MSFT:  {type: EQUITY, sector: Technology}
+  AMD:   {type: EQUITY, sector: Technology}
+  AVGO:  {type: EQUITY, sector: Technology}
+  TSM:   {type: EQUITY, sector: Technology}
+  QCOM:  {type: EQUITY, sector: Technology}
+  INTC:  {type: EQUITY, sector: Technology}
+  MU:    {type: EQUITY, sector: Technology}
+  ARM:   {type: EQUITY, sector: Technology}
+  TXN:   {type: EQUITY, sector: Technology}
+  AMAT:  {type: EQUITY, sector: Technology}
+  LRCX:  {type: EQUITY, sector: Technology}
+  KLAC:  {type: EQUITY, sector: Technology}
+  MRVL:  {type: EQUITY, sector: Technology}
+  ADI:   {type: EQUITY, sector: Technology}
+  PLTR:  {type: EQUITY, sector: Technology}
+  SMCI:  {type: EQUITY, sector: Technology}
+
+  # Cloud, Software & Enterprise AI
+  CRM:   {type: EQUITY, sector: Technology}
+  ORCL:  {type: EQUITY, sector: Technology}
+  ADBE:  {type: EQUITY, sector: Technology}
+  NOW:   {type: EQUITY, sector: Technology}
+  PANW:  {type: EQUITY, sector: Technology}
+  CRWD:  {type: EQUITY, sector: Technology}
+  SNOW:  {type: EQUITY, sector: Technology}
+  IBM:   {type: EQUITY, sector: Technology}
+  CSCO:  {type: EQUITY, sector: Technology}
+  DELL:  {type: EQUITY, sector: Technology}
+  ANET:  {type: EQUITY, sector: Technology}
+  WDAY:  {type: EQUITY, sector: Technology}
+  NET:   {type: EQUITY, sector: Technology}
+
+  # Communication & Digital Media
+  GOOGL: {type: EQUITY, sector: Communication Services}
+  GOOG:  {type: EQUITY, sector: Communication Services}
+  META:  {type: EQUITY, sector: Communication Services}
+  NFLX:  {type: EQUITY, sector: Communication Services}
+  DIS:   {type: EQUITY, sector: Communication Services}
+  CMCSA: {type: EQUITY, sector: Communication Services}
+  TMUS:  {type: EQUITY, sector: Communication Services}
+  VZ:    {type: EQUITY, sector: Communication Services}
+  T:     {type: EQUITY, sector: Communication Services}
+
+  # Consumer Discretionary & Retail
+  AMZN:  {type: EQUITY, sector: Consumer Discretionary}
+  TSLA:  {type: EQUITY, sector: Consumer Discretionary}
+  HD:    {type: EQUITY, sector: Consumer Discretionary}
+  MCD:   {type: EQUITY, sector: Consumer Discretionary}
+  NKE:   {type: EQUITY, sector: Consumer Discretionary}
+  SBUX:  {type: EQUITY, sector: Consumer Discretionary}
+  TGT:   {type: EQUITY, sector: Consumer Discretionary}
+  LOW:   {type: EQUITY, sector: Consumer Discretionary}
+  BKNG:  {type: EQUITY, sector: Consumer Discretionary}
+  TJX:   {type: EQUITY, sector: Consumer Discretionary}
+  ABNB:  {type: EQUITY, sector: Consumer Discretionary}
+
+  # Consumer Staples
+  COST:  {type: EQUITY, sector: Consumer Staples}
+  WMT:   {type: EQUITY, sector: Consumer Staples}
+  PG:    {type: EQUITY, sector: Consumer Staples}
+  KO:    {type: EQUITY, sector: Consumer Staples}
+  PEP:   {type: EQUITY, sector: Consumer Staples}
+  PM:    {type: EQUITY, sector: Consumer Staples}
+  MDLZ:  {type: EQUITY, sector: Consumer Staples}
+
+  # Financials & Fintech
+  JPM:   {type: EQUITY, sector: Financials}
+  V:     {type: EQUITY, sector: Financials}
+  MA:    {type: EQUITY, sector: Financials}
+  BAC:   {type: EQUITY, sector: Financials}
+  WFC:   {type: EQUITY, sector: Financials}
+  GS:    {type: EQUITY, sector: Financials}
+  MS:    {type: EQUITY, sector: Financials}
+  AXP:   {type: EQUITY, sector: Financials}
+  BLK:   {type: EQUITY, sector: Financials}
+  C:     {type: EQUITY, sector: Financials}
+  PYPL:  {type: EQUITY, sector: Financials}
+  COIN:  {type: EQUITY, sector: Financials}
+
+  # Energy & Natural Resources
+  XOM:   {type: EQUITY, sector: Energy}
+  CVX:   {type: EQUITY, sector: Energy}
+  COP:   {type: EQUITY, sector: Energy}
+  EOG:   {type: EQUITY, sector: Energy}
+  SLB:   {type: EQUITY, sector: Energy}
+  MPC:   {type: EQUITY, sector: Energy}
+  PSX:   {type: EQUITY, sector: Energy}
+
+  # Industrials & Aerospace
+  GE:    {type: EQUITY, sector: Industrials}
+  CAT:   {type: EQUITY, sector: Industrials}
+  BA:    {type: EQUITY, sector: Industrials}
+  RTX:   {type: EQUITY, sector: Industrials}
+  HON:   {type: EQUITY, sector: Industrials}
+  UNP:   {type: EQUITY, sector: Industrials}
+  LMT:   {type: EQUITY, sector: Industrials}
+  DE:    {type: EQUITY, sector: Industrials}
+  UBER:  {type: EQUITY, sector: Industrials}
+
+  # Healthcare & Biotechnology
+  LLY:   {type: EQUITY, sector: Health Care}
+  UNH:   {type: EQUITY, sector: Health Care}
+  JNJ:   {type: EQUITY, sector: Health Care}
+  ABBV:  {type: EQUITY, sector: Health Care}
+  MRK:   {type: EQUITY, sector: Health Care}
+  TMO:   {type: EQUITY, sector: Health Care}
+  ABT:   {type: EQUITY, sector: Health Care}
+  DHR:   {type: EQUITY, sector: Health Care}
+  PFE:   {type: EQUITY, sector: Health Care}
+  AMGN:  {type: EQUITY, sector: Health Care}
+  ISRG:  {type: EQUITY, sector: Health Care}
+  VRTX:  {type: EQUITY, sector: Health Care}
+
+regime_benchmark: SPY

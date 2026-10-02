@@ -167,8 +167,6 @@ class Settings(Frozen):
     webull_region: str
     webull_account_id: str
     state_dir: Path
-    llm_model: str = "claude-opus-5-5"
-    llm_model_fast: str = "claude-haiku-4-5"
     continuous_trading: bool = False
     scan_interval_minutes: int = Field(default=10, ge=5, le=60)
 
@@ -219,8 +217,6 @@ def load_settings() -> Settings:
         webull_region=os.environ.get("WEBULL_REGION", "sg").lower(),
         webull_account_id=os.environ.get("WEBULL_ACCOUNT_ID", ""),
         state_dir=_project_path(os.environ.get("STATE_DIR", "state")),
-        llm_model=os.environ.get("LLM_MODEL", "claude-opus-5-5"),
-        llm_model_fast=os.environ.get("LLM_MODEL_FAST", "claude-haiku-4-5"),
         continuous_trading=os.environ.get("CONTINUOUS_TRADING", "true").lower() in ("1", "true", "yes"),
         scan_interval_minutes=int(os.environ.get("SCAN_INTERVAL_MINUTES", "10")),
     )
