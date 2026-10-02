@@ -59,7 +59,7 @@ than 8%, size with Kelly, never have more than 6% at risk). Here they are applie
   Kelly edge gets no size.
 - **10% at risk.** `max_portfolio_risk_pct: 10.0` caps the sum of `(price - stop) x qty` across open positions.
 - **10-minute scans.** With `CONTINUOUS_TRADING=true`, the research pass runs every
-  `SCAN_INTERVAL_MINUTES` (default 10) during regular hours. Each scan is an LLM call, so costs scale with it.
+  `SCAN_INTERVAL_MINUTES` (default 10) during regular hours.
 
 ## Cash sweep (idle cash in an index ETF)
 
@@ -112,9 +112,9 @@ uv run trading-agent research --broker sim   # offline dry run on synthetic data
 1. **UAT read-only:** set `WEBULL_ENVIRONMENT=uat`, then run `trading-agent accounts` → put the id in
    `WEBULL_ACCOUNT_ID` → run `trading-agent probe`. Check that balance, positions and snapshot fields
    match what `broker/webull.py` expects.
-2. **Shadow mode** (`TRADING_MODE=shadow`, the default): schedule `tick --agent llm`
+2. **Shadow mode** (`TRADING_MODE=shadow`, the default): schedule `tick --agent baseline`
    (`scripts/com.trading-agent.tick.plist`). Everything runs except sending orders. Run it for weeks
-   and compare LLM ideas against the baseline.
+   and compare shadow results against the backtest.
 3. **UAT orders:** `TRADING_MODE=broker`, `WEBULL_ENVIRONMENT=uat`. Exercise preview, fills, stops,
    cancels and the kill switch against Webull's test environment.
 4. **Live execution:** `WEBULL_ENVIRONMENT=prod`, `TRADING_MODE=broker`, **and** set
@@ -137,7 +137,6 @@ uv run trading-agent backtest --start 2024-01-02                  # baseline, $1
 uv run trading-agent backtest --start 2024-01-02 --no-halt        # keep going after the kill switch trips
 uv run trading-agent backtest --start 2024-01-02 --no-trailing    # A/B the trailing stop
 uv run trading-agent backtest --start 2024-01-02 --cash 900 --sweep SPYM   # A/B the cash sweep (--no-sweep)
-uv run trading-agent backtest --start 2025-06-02 --agent llm --max-llm-calls 40   # costs money; cached
 ```
 
 `backtest.py` replays daily bars through the live agent, verifier, sizing, risk engine and trailing

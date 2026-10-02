@@ -35,7 +35,7 @@ def ledger():
 
 def make_settings(tmp_path: Path, mode: TradingMode = TradingMode.BROKER, env: str = "uat") -> Settings:
     return Settings(trading_mode=mode, webull_environment=env, webull_region="sg", webull_account_id="SIM",
-                    state_dir=tmp_path, llm_model="test")
+                    state_dir=tmp_path)
 
 
 def seeded_broker(now: datetime, cash: float = 1_000_000) -> SimulatedBroker:

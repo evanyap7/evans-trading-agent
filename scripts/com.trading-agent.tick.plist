@@ -12,7 +12,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/uv</string><string>run</string><string>trading-agent</string>
-    <string>tick</string><string>--agent</string><string>llm</string>
+    <string>tick</string><string>--agent</string><string>baseline</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
