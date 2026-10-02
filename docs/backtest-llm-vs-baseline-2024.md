@@ -88,9 +88,9 @@ any benefit. That is a large drag next to a +20% return.
 
 | What | Where |
 |---|---|
-| Harness and spend guard | `scripts/backtest_harness.py` (branch `worktree-harness-fixes`, pushed) |
+| Harness | `scripts/backtest_harness.py` (baseline only; the spend guard and `compare` were removed with the LLM layer, see git history at commit `7e2f386`) |
 | Backtester error surfacing | `src/trading_agent/backtest.py` |
-| Spend ledger | `state/backtest_cache/llm_spend.jsonl` |
+| Spend ledger (historical) | `state/backtest_cache/llm_spend.jsonl` |
 | Run log | `$CLAUDE_JOB_DIR/tmp/llm_2024.log` |
 | Saved partial LLM-removal edit | `$CLAUDE_JOB_DIR/tmp/partial-llm-removal.patch` |
 
