@@ -2,7 +2,7 @@
 
     trading-agent accounts                 list Webull accounts (find WEBULL_ACCOUNT_ID)
     trading-agent probe --symbol SPY       dump raw Webull responses to check field mappings
-    trading-agent research [--agent llm]   post-close research cycle
+    trading-agent research                 post-close research cycle
     trading-agent execute                  in-session execution of queued proposals
     trading-agent monitor                  reconcile, circuit breakers, exits
     trading-agent tick                     scheduler entry: runs whichever of the above is due (US/Eastern)
@@ -11,7 +11,7 @@
     trading-agent unkill
     trading-agent verify-ledger            check the audit hash chain
     trading-agent calibration              the agent's stated confidence vs actual results on closed trades
-    trading-agent backtest --start 2024-01-01 [--end ...] [--agent llm] [--cash 1500] [--sweep SPYM]
+    trading-agent backtest --start 2024-01-01 [--end ...] [--cash 1500] [--sweep SPYM]
                                            replay history through the live pipeline
 
 Add `--broker sim` to any cycle to run against synthetic data with no credentials.
@@ -28,7 +28,7 @@ import socket
 import sys
 from pathlib import Path
 
-from .agents import BaselineMomentumAgent, ClaudeResearchAgent, TieredResearchAgent
+from .agents import BaselineMomentumAgent
 from .config import TradingMode, load_events, load_risk_limits, load_settings, load_universe
 from .killswitch import KillSwitch
 from .ledger import Ledger
@@ -109,11 +109,7 @@ def _build(args) -> Orchestrator:
             broker = PaperBroker(broker, settings.state_dir / "paper_broker.json")
     if settings.trading_mode == TradingMode.BROKER and settings.is_production and not limits.live_trading.enabled:
         print("NOTE: prod + broker mode but live_trading.enabled is false: every entry will be risk-rejected.")
-    agent = (
-        TieredResearchAgent(model_reasoning=settings.llm_model, model_fast=settings.llm_model_fast)
-        if args.agent == "llm"
-        else BaselineMomentumAgent()
-    )
+    agent = BaselineMomentumAgent()
     ledger = Ledger(settings.state_dir / "ledger.db")
     continuous = getattr(args, "continuous", None)
     return Orchestrator(settings=settings, limits=limits, universe=universe, events=events, broker=broker,
@@ -127,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
         c = sub.add_parser(name)
         c.add_argument("--broker", choices=["webull", "paper", "sim"], default="webull",
                        help="paper: live Webull prices, simulated fills, separate ledger in state/paper")
-        c.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
+        c.add_argument("--agent", choices=["baseline"], default="baseline")
         if name == "tick":
             c.add_argument("--continuous", action="store_true", default=None,
                            help="Enable continuous intraday scans every SCAN_INTERVAL_MINUTES")
@@ -143,7 +139,7 @@ def main(argv: list[str] | None = None) -> None:
     bt = sub.add_parser("backtest", help="replay historical daily bars through the live decision pipeline")
     bt.add_argument("--start", required=True, type=_date, help="first trading day (YYYY-MM-DD)")
     bt.add_argument("--end", type=_date, default=None, help="last trading day (default: yesterday)")
-    bt.add_argument("--agent", choices=["llm", "baseline"], default="baseline")
+    bt.add_argument("--agent", choices=["baseline"], default="baseline")
     bt.add_argument("--cash", type=float, default=1500.0, help="starting cash in USD")
     bt.add_argument("--no-trailing", action="store_true", help="disable the trailing stop (A/B comparison)")
     bt.add_argument("--no-halt", action="store_true",
@@ -154,8 +150,6 @@ def main(argv: list[str] | None = None) -> None:
     sweep.add_argument("--sweep", metavar="SYMBOL", default=None,
                        help="park idle cash in this ETF (e.g. SPYM, SGOV), overriding cash_sweep in the config")
     sweep.add_argument("--no-sweep", action="store_true", help="leave idle cash uninvested, whatever the config says")
-    bt.add_argument("--max-llm-calls", type=int, default=40,
-                    help="refuse to make more than this many uncached LLM calls (each costs money)")
     bt.add_argument("--out", type=Path, default=None, help="directory for summary.json, trades.csv, equity.csv")
     # Databento institutional market data commands
     db_p = sub.add_parser("databento", help="inspect Databento market data connection, datasets, and query costs")
@@ -216,7 +210,7 @@ def _date(s: str):
 def _backtest(args, settings) -> None:
     from datetime import date, datetime, timedelta
 
-    from .backtest import AgentOutputCache, Backtester, load_bars, load_earnings_history
+    from .backtest import Backtester, load_bars, load_earnings_history
 
     limits, universe = load_risk_limits(), load_universe()
     end = args.end or date.today() - timedelta(days=1)
@@ -235,16 +229,8 @@ def _backtest(args, settings) -> None:
     bars = load_bars(symbols, args.start, end, cache_dir)
     stocks = [s for s, sec in universe.symbols.items() if sec.type == "EQUITY"]
     earnings = {} if args.ignore_earnings else load_earnings_history(stocks, cache_dir)
-    if args.agent == "llm":
-        agent = TieredResearchAgent(model_reasoning=settings.llm_model, model_fast=settings.llm_model_fast)
-        print("NOTE: the LLM was trained on text covering these dates, so its results are optimistic (lookahead).")
-    else:
-        agent = BaselineMomentumAgent()
-    cache = (AgentOutputCache(cache_dir / "agent_outputs" / agent.model.replace("/", "_"), args.max_llm_calls)
-             if args.agent == "llm" else None)
-    bt = Backtester(bars=bars, agent=agent, limits=limits, universe=universe, start=args.start, end=end,
-                    starting_cash=args.cash, earnings_history=earnings, halt_on_kill_switch=not args.no_halt,
-                    output_cache=cache)
+    bt = Backtester(bars=bars, agent=BaselineMomentumAgent(), limits=limits, universe=universe, start=args.start,
+                    end=end, starting_cash=args.cash, earnings_history=earnings, halt_on_kill_switch=not args.no_halt)
     result = bt.run()
     if not args.ignore_earnings:
         for s in sorted(x for x in stocks if not earnings.get(x)):

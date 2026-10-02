@@ -23,6 +23,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -140,6 +141,8 @@ class BacktestResult:
             "avg_invested_pct": round(fmean(self.invested) * 100, 1) if self.invested else None,
             "benchmark_return_pct": round(_ret(bench), 2),
             "benchmark_max_drawdown_pct": round(_max_dd(bench), 2),
+            "benchmark_sharpe": round(_sharpe(bench), 2),
+            "sharpe_vs_benchmark_ratio": round(_sharpe(eq) / _sharpe(bench), 2) if _sharpe(bench) > 0 else None,
             "excess_vs_benchmark_pct": round(_ret(eq) - _ret(bench), 2),
             "trend_benchmark_return_pct": round(_ret(trend), 2),
             "trend_benchmark_max_drawdown_pct": round(_max_dd(trend), 2),
@@ -423,7 +426,10 @@ class Backtester:
         try:
             output = self.cache.propose(self.agent, ctx) if self.cache else self.agent.propose(ctx)
         except Exception as e:  # same as live: a failed model call is a NO_TRADE
-            self.result.rejections[f"agent error: {type(e).__name__}"] += 1
+            key = f"agent error: {type(e).__name__}"
+            if key not in self.result.rejections:  # surface the first message of each kind, not just a count
+                self.result.warnings.append(f"{key}: {str(e)[:200]}")
+            self.result.rejections[key] += 1
             return
 
         cycle_ev = {e.evidence_id: e.symbol for e in evidence}
