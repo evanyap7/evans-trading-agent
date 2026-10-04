@@ -1,7 +1,7 @@
 """Loads the human-controlled configuration.
 
 Risk limits are frozen Pydantic models built from a YAML file under version
-control. Nothing the LLM produces flows into these objects.
+control. Nothing the agent produces flows into these objects.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class SignalLimits(Frozen):
     max_stop_atr: float = Field(gt=0)
     # confidence minus the break-even win rate down / (up + down); the stock version of "mispriced by more than 8%"
     min_probability_edge: float = Field(default=0.08, ge=0, le=1)
-    # Fraction of the full Kelly bet used for sizing. LLM probabilities are noisy, and full Kelly on an
+    # Fraction of the full Kelly bet used for sizing. agent probabilities are uncalibrated, and full Kelly on an
     # overestimated edge overbets badly, so this stays well below 1.
     kelly_fraction: float = Field(default=0.25, gt=0, le=1)
 

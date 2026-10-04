@@ -1,5 +1,5 @@
 # Deterministic risk envelope. Changed only by a human, through a git commit.
-# The LLM cannot write this file; its hash is recorded with every risk decision.
+# The agent cannot write this file; its hash is recorded with every risk decision.
 
 live_trading:
   enabled: true               # real orders need: this true + WEBULL_ENVIRONMENT=prod + TRADING_MODE=broker
@@ -23,7 +23,7 @@ account:
   max_new_trades_per_day: 5
   max_order_value_usd: 1000   # allows buying whole shares of large-cap leaders
   max_adv_participation_pct: 2
-  daily_profit_target_usd: 10.0 # reporting benchmark only; it never triggers an exit or reaches the LLM
+  daily_profit_target_usd: 10.0 # reporting benchmark only; it never triggers an exit
   # Short-selling exposure caps — only evaluated when permit_shorting is on
   max_short_exposure_pct: 30  # never more than 30% of equity sold short
   max_gross_exposure_pct: 130 # long + |short| capped at 130% of equity
@@ -39,7 +39,7 @@ signal:
   # A 2:1 setup breaks even at 33%, so it needs confidence of at least 41%.
   min_probability_edge: 0.08
   # Size from the edge: risk = kelly_fraction * (p - (1 - p) / reward_risk) of equity, still capped by
-  # requested_risk_pct and max_risk_per_trade_pct. Quarter Kelly, because the probabilities come from an LLM.
+  # requested_risk_pct and max_risk_per_trade_pct. Quarter Kelly, because the agent probabilities are uncalibrated.
   kelly_fraction: 0.25
 
 execution:
