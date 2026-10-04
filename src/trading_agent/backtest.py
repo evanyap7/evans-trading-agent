@@ -12,8 +12,7 @@ market is replayed. Each trading day D:
               verify -> size_order -> risk.evaluate exactly as in `Orchestrator.research`.
 
 Known optimism that no replay removes: the universe is today's list (survivorship), there is no
-historical news, and an LLM has read about these dates in training (lookahead). Treat an LLM
-backtest as an upper bound, and the baseline as the honest control.
+historical news, and results cover few market regimes.
 """
 
 from __future__ import annotations
@@ -506,7 +505,7 @@ def manage_bar(p: OpenPosition, bar: Bar, idx: int, slippage_bps: float) -> tupl
 
 
 # ---------------------------------------------------------------------------
-# Agent output cache (LLM runs are slow and cost money; re-runs should be free)
+# Agent output cache (re-runs should be free)
 # ---------------------------------------------------------------------------
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "trading-agent"
 version = "0.1.0"
-description = "Autonomous LLM swing-trading agent for Webull Singapore, inside a deterministic risk envelope."
+description = "Autonomous rule-based swing-trading agent for Webull Singapore, inside a deterministic risk envelope."
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.7",

@@ -3,13 +3,13 @@
 **Author**: Evan Yap ([@evanyap7](https://github.com/evanyap7))
 
 An autonomous swing-trading agent for a **Webull Singapore** account, built from
-`trading-agent.md`. The LLM invents trades. Deterministic code verifies
+`trading-agent.md`. A rule-based momentum agent proposes trades. Deterministic code verifies
 them, sizes them, and approves or rejects them. The official Webull SDK
-executes them. No human approval step, and no way for the model to go around
+executes them. No human approval step, and no way for the agent to go around
 the envelope.
 
 ```
-research (after US close)  evidence ─► LLM ─► verifier ─► sizing ─► risk ─► queue
+research (after US close)  evidence ─► agent ─► verifier ─► sizing ─► risk ─► queue
 execute  (09:45 ET)        fresh quotes ─► re-verify ─► re-size ─► full risk ─► preview ─► place
 monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / target / time-stop exits
 ```
@@ -20,17 +20,19 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 
 ## What exists today (Phases 0, 1, 4 and most of 5)
 
+The Claude LLM agents were built, backtested on 2024 and removed: no edge over the baseline and about
+$27 a year in API cost ([report](docs/backtest-llm-vs-baseline-2024.md)).
+
 | Blueprint component | Where |
 |---|---|
-| Structured LLM trade contract (`OPEN` / `CLOSE` / NO_TRADE) | `schemas.py` |
-| Tiered LLM Intelligence (Fast quantitative screener + Deep reasoning strategist) | `agents.py` |
+| Structured trade contract (`OPEN` / `CLOSE` / NO_TRADE) | `schemas.py` |
 | Real-time multi-source financial news & macro evidence (Bloomberg, WSJ, Economist, Reuters, NYSE) | `news.py` |
 | Telegram personal assistant bot alerts & 9:00 AM daily executive morning briefing | `alerts.py` |
-| Rule-based momentum baseline, the benchmark the LLM has to beat | `agents.py` |
+| Rule-based momentum baseline, the only agent; it matches SPY in 2024 but does not beat it | `agents.py` |
 | Quantitative Mathematics Engine: descriptive stats, dispersion, Bayes, Monte Carlo, linear algebra, linear regression & momentum calculus | `math_quant.py` ([docs](docs/algorithmic_trading_maths.md)) |
 | Point-in-time price features & quantitative evidence | `features.py` |
 | Quant verifier: grounding, freshness, price collar, ATR stop, R:R, probability edge vs break-even, net edge after costs | `verifier.py` |
-| Position sizing from fractional Kelly, risk budget and caps (the LLM never picks quantity) | `portfolio.py` |
+| Position sizing from fractional Kelly, risk budget and caps (the agent never picks quantity) | `portfolio.py` |
 | Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |
 | Capital rotation & pre-existing portfolio position exit engine | `orchestrator.py`, `execution.py` |
 | Idempotent execution: deterministic client order IDs, preview check, no blind retries | `execution.py` |
@@ -40,7 +42,7 @@ monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / targe
 | Databento market data adapter (Historical OHLCV, Live streaming, symbology & cost guard) | `databento_data.py` ([docs](docs/databento_integration.md)) |
 | Webull SG adapter (official SDK v3.0.2 + resilient yfinance / Databento fallback, UAT + prod) | `broker/webull.py` |
 | Simulated broker for tests and offline runs | `broker/simulated.py` |
-| 160+ unit and integration tests covering the blueprint's failure list | `tests/` |
+| unit and integration tests covering the blueprint's failure list | `tests/` |
 
 **Not built yet:** Postgres/Timescale database backend,
 web dashboard, real-time WebSocket order-event stream (gRPC/polling used instead), options (Phase 7;
@@ -57,7 +59,7 @@ than 8%, size with Kelly, never have more than 6% at risk). Here they are applie
 - **Kelly sizing.** Risk per trade is `kelly_fraction x (p - (1 - p) / reward_risk)` of equity (quarter
   Kelly by default). It is still capped by `requested_risk_pct` and `max_risk_per_trade_pct`. An idea with no
   Kelly edge gets no size.
-- **10% at risk.** `max_portfolio_risk_pct: 10.0` caps the sum of `(price - stop) x qty` across open positions.
+- **6% at risk.** `max_portfolio_risk_pct: 6.0` caps the sum of `(price - stop) x qty` across open positions.
 - **10-minute scans.** With `CONTINUOUS_TRADING=true`, the research pass runs every
   `SCAN_INTERVAL_MINUTES` (default 10) during regular hours.
 
@@ -103,7 +105,7 @@ cash-account rules.
 cd ~/trading-agent
 uv sync --extra webull
 cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run pytest                # 149 passing
+uv run pytest                # 174 passing
 uv run trading-agent research --broker sim   # offline dry run on synthetic data
 ```
 
@@ -145,12 +147,11 @@ Stops, targets and gaps come from the daily range, and when a bar touches both, 
 The run prints expectancy in R, win rate, profit factor, drawdown, Sharpe, exit reasons, the most common
 rejection reasons, the average share of equity invested, and two benchmarks: SPY buy-and-hold (with the
 excess return over it) and SPY held only while above its 200-day average. If the agent cannot beat both
-after LLM costs, its trades add nothing. The run writes `summary.json`, `trades.csv` and `equity.csv` under
-`state/backtests/`. Bars, earnings dates and LLM outputs are cached in `state/backtest_cache/`.
+its trades add nothing. The run writes `summary.json`, `trades.csv` and `equity.csv` under
+`state/backtests/`. Bars and earnings dates are cached in `state/backtest_cache/`.
 
 Results are optimistic in three known ways: the universe is today's list, no historical news is
-replayed, and an LLM has seen these dates in training. Treat the baseline as the honest control and an
-LLM run as an upper bound.
+replayed, and results cover few market regimes (2024 was a strong bull year).
 
 ## Operating
 
