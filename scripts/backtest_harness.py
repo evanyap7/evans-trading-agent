@@ -124,6 +124,7 @@ def _run_backtest_instance(
     end_d: date,
     cash: float,
     sweep_sym: str | None = None,
+    insider_min_usd: float | None = None,
 ) -> dict:
     universe_path = TOP100_CONFIG if TOP100_CONFIG.exists() else None
     univ = load_universe(universe_path)
@@ -139,9 +140,14 @@ def _run_backtest_instance(
     from trading_agent.backtest import load_earnings_history
     earnings_hist = load_earnings_history(symbols, CACHE_DIR)
 
+    insider_buys = None
+    if insider_min_usd is not None:
+        from trading_agent.insider import load_insider_buys
+        insider_buys = load_insider_buys(start_d - timedelta(days=90), end_d, PROJECT_ROOT / "state" / "insider")
+
     bt = Backtester(
         bars=bars,
-        agent=BaselineMomentumAgent(),
+        agent=BaselineMomentumAgent(insider_min_usd=insider_min_usd),
         limits=limits,
         universe=univ,
         start=start_d,
@@ -149,6 +155,7 @@ def _run_backtest_instance(
         starting_cash=cash,
         earnings_history=earnings_hist,
         halt_on_kill_switch=False,
+        insider_buys=insider_buys,
     )
     return bt.run().summary()
 
@@ -158,7 +165,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     start_d = _parse_date(args.start)
     end_d = _parse_date(args.end)
     print(f"Running 2-Year Backtest ({args.agent.upper()}) from {start_d} to {end_d}...")
-    s = _run_backtest_instance(start_d, end_d, args.cash, args.sweep)
+    s = _run_backtest_instance(start_d, end_d, args.cash, args.sweep, args.insider_min_usd)
 
     print("\n" + "=" * 50)
     print(f"  2-YEAR BACKTEST SUMMARY: {args.agent.upper()}")
@@ -215,6 +222,8 @@ def main() -> None:
     rn.add_argument("--end", default="2026-09-30", help="end date YYYY-MM-DD")
     rn.add_argument("--cash", type=float, default=1500.0, help="starting cash USD")
     rn.add_argument("--sweep", default=None, help="cash sweep ETF symbol, e.g. SPYM")
+    rn.add_argument("--insider-min-usd", type=float, default=None,
+                    help="also buy stocks with at least this much in filed insider open-market buys (90d), e.g. 100000")
 
     args = p.parse_args()
     {"smoke": cmd_smoke, "download": cmd_download, "run": cmd_run}[args.cmd](args)

@@ -8,9 +8,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol
+
+from pydantic import ValidationError
 
 from .schemas import AgentOutput, Evidence, TradeProposal
 
@@ -24,6 +26,7 @@ class AgentContext:
     positions: list[dict]
     known_earnings: dict[str, str]
     features: dict[str, dict]
+    insider: dict[str, dict] = field(default_factory=dict)  # symbol -> {usd, insiders}: filed buys, trailing 90d
 
 
 class ResearchAgent(Protocol):
@@ -66,8 +69,11 @@ class BaselineMomentumAgent:
     name = "baseline"
     model = "baseline-momentum-v1"
 
-    def __init__(self, max_ideas: int = 4):
+    def __init__(self, max_ideas: int = 4, insider_min_usd: float | None = None):
         self.max_ideas = max_ideas
+        self.insider_min_usd = insider_min_usd  # None = momentum only
+        if insider_min_usd is not None:
+            self.model = "baseline-momentum-v1+insider"
 
     def propose(self, ctx: AgentContext) -> AgentOutput:
         regime = next((e for e in ctx.evidence if e.kind == "regime"), None)
@@ -96,22 +102,44 @@ class BaselineMomentumAgent:
         proposals = []
         # Long proposals (propose in bull/healthy regime)
         if is_bull_regime:
-            long_quota = max(1, self.max_ideas // 2)
-            for _, sym in sorted(long_candidates, reverse=True)[: long_quota]:
+            def long_idea(sym: str, strategy: str, thesis: str, days: int) -> TradeProposal | None:
                 f = ctx.features[sym]
                 close, a = f["close"], f["atr14"]
                 limit = round(close * 1.002, 2)
                 stop, tp = round(limit - 2 * a, 2), round(limit + 4 * a, 2)
                 up, down = (tp - limit) / limit * 100, (limit - stop) / limit * 100
                 conf = 0.55
-                proposals.append(TradeProposal(
-                    symbol=sym, instrument_type=ctx.universe[sym]["type"], side="BUY", strategy="momentum_trend",
-                    thesis=f"{sym} is among the strongest 60-day performers and trades above its 50 and 200-day averages.",
-                    holding_period_days=15, confidence=conf, expected_return_pct=round(conf * up - (1 - conf) * down, 2),
-                    invalidation_price=stop, entry={"order_type": "LIMIT", "limit_price": limit},
-                    exit={"take_profit": tp, "stop_loss": stop, "time_stop_days": 15}, requested_risk_pct=0.25,
-                    evidence_ids=[px_ev[sym].evidence_id] + regime_ev_id,
-                ))
+                try:
+                    return TradeProposal(
+                        symbol=sym, instrument_type=ctx.universe[sym]["type"], side="BUY", strategy=strategy,
+                        thesis=thesis, holding_period_days=days, confidence=conf,
+                        expected_return_pct=round(conf * up - (1 - conf) * down, 2),
+                        invalidation_price=stop, entry={"order_type": "LIMIT", "limit_price": limit},
+                        exit={"take_profit": tp, "stop_loss": stop, "time_stop_days": days}, requested_risk_pct=0.25,
+                        evidence_ids=[px_ev[sym].evidence_id] + regime_ev_id,
+                    )
+                except ValidationError:  # e.g. ATR so wide the 4-ATR target breaks schema bounds: skip, keep the rest
+                    return None
+
+            long_quota = max(1, self.max_ideas // 2)
+            taken: set[str] = set()
+            if self.insider_min_usd is not None:
+                # Public Form 4 open-market buys, by filing date. Ranked by dollars bought.
+                hot = sorted(((v["usd"], sym) for sym, v in ctx.insider.items()
+                              if v["usd"] >= self.insider_min_usd and sym not in held and sym in px_ev
+                              and ctx.universe.get(sym, {}).get("type") == "EQUITY"), reverse=True)
+                for usd, sym in hot[:long_quota]:
+                    n = ctx.insider[sym]["insiders"]
+                    idea = long_idea(sym, "insider_cluster", f"{sym}: insiders filed ${usd:,.0f} of open-market buys "
+                                     f"({n} insider{'s' if n != 1 else ''}) in the last 90 days.", 40)
+                    if idea:
+                        proposals.append(idea)
+                        taken.add(sym)
+            for _, sym in sorted(long_candidates, reverse=True)[:long_quota]:
+                if sym not in taken and (idea := long_idea(
+                        sym, "momentum_trend",
+                        f"{sym} is among the strongest 60-day performers and trades above its 50 and 200-day averages.", 15)):
+                    proposals.append(idea)
 
         # Short proposals (propose in both regimes, prioritize in bear regimes)
         short_quota = self.max_ideas if not is_bull_regime else max(1, self.max_ideas // 2)
@@ -135,6 +163,7 @@ class BaselineMomentumAgent:
                 evidence_ids=[px_ev[sym].evidence_id] + regime_ev_id,
             ))
 
+        proposals = proposals[:5]  # AgentOutput allows at most 5; insider ideas come first, shorts last
         market_view = "risk-on: benchmark above 200-day average" if is_bull_regime else "risk-off: benchmark below 200-day average (shorting focus)"
         no_trade = None if proposals else ("no qualifying trends" if is_bull_regime else "no qualifying breakdown trends to short")
         return AgentOutput(market_view=market_view, proposals=proposals, no_trade_reason=no_trade)

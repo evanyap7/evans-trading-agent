@@ -33,6 +33,7 @@ from statistics import fmean, pstdev
 from .agents import AgentContext, ResearchAgent, render_context
 from .config import Events, RiskLimits, Universe
 from .features import build_evidence
+from .insider import buy_clusters
 from .market_calendar import ET
 from .portfolio import size_order, trailed_stop
 from .risk import OpenRisk, RiskContext, evaluate
@@ -185,8 +186,11 @@ class Backtester:
     def __init__(self, *, bars: dict[str, list[Bar]], agent: ResearchAgent, limits: RiskLimits, universe: Universe,
                  start: date, end: date, starting_cash: float,
                  earnings_history: dict[str, list[date]] | None = None, halt_on_kill_switch: bool = True,
-                 output_cache: "AgentOutputCache | None" = None):
+                 output_cache: "AgentOutputCache | None" = None, insider_buys: list[dict] | None = None):
         self.limits, self.universe, self.agent = limits, universe, agent
+        self.insider_by_sym: dict[str, list[dict]] = {}
+        for b in insider_buys or []:
+            self.insider_by_sym.setdefault(b["symbol"], []).append(b)
         self.halt_on_kill_switch = halt_on_kill_switch
         self.cache = output_cache
         self.earnings = {s: sorted(ds) for s, ds in (earnings_history or {}).items()}
@@ -421,6 +425,8 @@ class Backtester:
                        for p in positions],
             known_earnings={s: v.isoformat() for s, v in earnings.items()},
             features=features,
+            insider={s: c for s in self.insider_by_sym if s in self.universe.symbols
+                     and (c := buy_clusters(self.insider_by_sym[s], s, d))["usd"] > 0},
         )
         try:
             output = self.cache.propose(self.agent, ctx) if self.cache else self.agent.propose(ctx)

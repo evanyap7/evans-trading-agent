@@ -34,6 +34,7 @@ $27 a year in API cost ([report](docs/backtest-llm-vs-baseline-2024.md)).
 | Quantitative Mathematics Engine: descriptive stats, dispersion, Bayes, Monte Carlo, linear algebra, linear regression & momentum calculus | `math_quant.py` ([docs](docs/algorithmic_trading_maths.md)) |
 | Point-in-time price features & quantitative evidence | `features.py` |
 | Quant verifier: grounding, freshness, price collar, ATR stop, R:R, probability edge vs break-even, net edge after costs | `verifier.py` |
+| SEC Form 4 insider-buy data and study, off by default: no edge on large caps ([study](docs/insider-signal-study.md)) | `insider.py`, `scripts/insider_study.py` |
 | Position sizing from fractional Kelly, risk budget and caps (the agent never picks quantity) | `portfolio.py` |
 | Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |
 | Capital rotation & pre-existing portfolio position exit engine | `orchestrator.py`, `execution.py` |
@@ -107,7 +108,7 @@ cash-account rules.
 cd ~/trading-agent
 uv sync --extra webull
 cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run pytest                # 174 passing
+uv run pytest                # 176 passing
 uv run trading-agent research --broker sim   # offline dry run on synthetic data
 ```
 
