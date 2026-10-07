@@ -99,3 +99,12 @@ def make_orchestrator(tmp_path, broker, agent, now, mode=TradingMode.BROKER, env
                         universe=load_universe(), events=events or Events(), broker=broker,
                         ledger=Ledger(tmp_path / "ledger.db"), agent=agent, now=lambda: now,
                         enable_news=enable_news, continuous_trading=continuous_trading)
+
+
+@pytest.fixture(autouse=True)
+def _alerts_not_quiet():
+    """An Orchestrator in shadow mode mutes alerts globally; do not let that leak between tests."""
+    from trading_agent import alerts
+    alerts.QUIET = False
+    yield
+    alerts.QUIET = False

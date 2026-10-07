@@ -24,6 +24,7 @@ import contextlib
 import fcntl
 import json
 import os
+import shutil
 import socket
 import sys
 from pathlib import Path
@@ -110,10 +111,24 @@ def _build(args) -> Orchestrator:
     if settings.trading_mode == TradingMode.BROKER and settings.is_production and not limits.live_trading.enabled:
         print("NOTE: prod + broker mode but live_trading.enabled is false: every entry will be risk-rejected.")
     agent = BaselineMomentumAgent()
-    ledger = Ledger(settings.state_dir / "ledger.db")
+    ledger = Ledger(_ledger_path(settings))
     continuous = getattr(args, "continuous", None)
     return Orchestrator(settings=settings, limits=limits, universe=universe, events=events, broker=broker,
                         ledger=ledger, agent=agent, continuous_trading=continuous)
+
+
+def _ledger_path(settings) -> Path:
+    """Shadow runs get their own ledger so they never write into the one holding real orders. The first shadow
+    run starts from a copy of the live ledger, so open trades carry over; after that the two diverge."""
+    live = settings.state_dir / "ledger.db"
+    if settings.trading_mode != TradingMode.SHADOW:
+        return live
+    shadow = settings.state_dir / "shadow" / "ledger.db"
+    if not shadow.exists():
+        shadow.parent.mkdir(parents=True, exist_ok=True)
+        if live.exists():
+            shutil.copy2(live, shadow)
+    return shadow
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -187,7 +202,7 @@ def main(argv: list[str] | None = None) -> None:
         KillSwitch(settings.state_dir).release()
         print("kill switch released")
     elif args.cmd == "verify-ledger":
-        ok = Ledger(settings.state_dir / "ledger.db").verify_chain()
+        ok = Ledger(_ledger_path(settings)).verify_chain()
         print("ledger hash chain OK" if ok else "LEDGER TAMPERING DETECTED")
         sys.exit(0 if ok else 1)
     elif args.cmd == "status":
@@ -249,7 +264,7 @@ def _calibration(settings) -> None:
     from .backtest import calibration
     from .schemas import Proposal
 
-    led = Ledger(settings.state_dir / "ledger.db")
+    led = Ledger(_ledger_path(settings))
     pairs = []
     for t in led.iter_rows("SELECT * FROM trades WHERE status='CLOSED'"):
         pa = led.db.execute("SELECT proposal FROM pending_actions WHERE decision_id=?", (t["decision_id"],)).fetchone()
@@ -269,7 +284,7 @@ def _calibration(settings) -> None:
 
 def _status(settings) -> None:
     ks = KillSwitch(settings.state_dir)
-    led = Ledger(settings.state_dir / "ledger.db")
+    led = Ledger(_ledger_path(settings))
     limits = load_risk_limits()
     target = getattr(limits.account, "daily_profit_target_usd", 10.0)
     print(f"mode={settings.trading_mode.value} env={settings.webull_environment} continuous={settings.continuous_trading}")

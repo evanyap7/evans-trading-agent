@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable
 
+from . import alerts
 from .agents import AgentContext, ResearchAgent
 from .broker.base import Broker, OrderRequest
 from .config import Events, RiskLimits, Settings, TradingMode, Universe
@@ -63,6 +64,7 @@ class Orchestrator:
             continuous_trading if continuous_trading is not None else settings.continuous_trading
         )
         self.kill = KillSwitch(settings.state_dir)
+        alerts.QUIET = settings.trading_mode != TradingMode.BROKER  # shadow runs silently (see send_telegram)
         self.exec = ExecutionEngine(broker, ledger, limits, send_orders=settings.trading_mode == TradingMode.BROKER)
         self._sweep: SweepState = EMPTY_SWEEP  # refreshed by every _account()
 

@@ -35,8 +35,14 @@ def get_telegram_config() -> tuple[str, str]:
     return token, chat_id
 
 
-def send_telegram(text: str) -> bool:
+# Set by the Orchestrator: shadow mode is silent. Pass always=True for messages that must get through anyway.
+QUIET = False
+
+
+def send_telegram(text: str, *, always: bool = False) -> bool:
     """Dispatches a markdown-formatted message to Evan's Telegram assistant."""
+    if QUIET and not always:
+        return False
     token, chat_id = get_telegram_config()
     if not token or not chat_id:
         return False
@@ -284,7 +290,7 @@ def alert_killswitch(reason: str, engaged: bool = True) -> None:
         msg = f"🚨 *EMERGENCY KILL SWITCH ENGAGED*\n\n*Reason*: {reason}\n*Status*: No new entries; working entry orders are cancelled. Protective stops and exits stay active."
     else:
         msg = f"✅ *Kill Switch Released*\n\nAutonomous trading resumed."
-    send_telegram(msg)
+    send_telegram(msg, always=True)
 
 
 def alert_unprotected(symbol: str, qty: int, stop: float, stop_state: str) -> None:
@@ -292,12 +298,13 @@ def alert_unprotected(symbol: str, qty: int, stop: float, stop_state: str) -> No
         f"⚠️ *UNPROTECTED POSITION*\n\n"
         f"• *Ticker*: `{symbol}` x{qty}\n"
         f"• Broker-side stop at `${stop:.2f}` is `{stop_state}`\n"
-        f"Only the 5-minute software stop is protecting this position. Check Webull."
+        f"Only the 5-minute software stop is protecting this position. Check Webull.",
+        always=True,
     )
 
 
 def alert_cycle_error(kind: str, error: str) -> None:
-    send_telegram(f"❌ *Trading cycle failed*: `{kind}`\n\n{error[:500]}")
+    send_telegram(f"❌ *Trading cycle failed*: `{kind}`\n\n{error[:500]}", always=True)
 
 
 def build_daily_briefing_text(account: Any, ledger: Any = None, date_str: str = "") -> str:
@@ -408,5 +415,5 @@ def build_daily_briefing_text(account: Any, ledger: Any = None, date_str: str = 
 def send_daily_morning_briefing(account: Any, ledger: Any = None, date_str: str = "") -> bool:
     """Dispatches the 9:00 AM daily briefing to Evan's Telegram assistant."""
     text = build_daily_briefing_text(account, ledger, date_str)
-    return send_telegram(text)
+    return send_telegram(text, always=True)
 
