@@ -314,3 +314,15 @@ def test_telegram_falls_back_to_plain_text():
             patch.object(alerts.requests, "post", side_effect=responses) as post:
         assert alerts.send_telegram("reason: drawdown_ok failed *")
     assert post.call_count == 2 and "parse_mode" not in post.call_args.kwargs["json"]
+
+
+def test_repeated_monitor_passes_alert_an_exit_only_once(tmp_path):
+    from trading_agent.config import TradingMode  # noqa: F401  (shadow mode never closes the position)
+    broker, orch = _open_position(tmp_path)
+    tp = orch.ledger.open_trades()[0]["take_profit"]
+    broker.set_quote("XLK", bid=tp + 0.5, ask=tp + 0.6, last=tp + 0.55, fetched_at=IN_SESSION)
+    shadow = make_orchestrator(tmp_path, broker, ScriptedAgent(one_idea), IN_SESSION, mode=TradingMode.SHADOW)
+    with patch("trading_agent.alerts.alert_trade_exited") as alert:
+        for _ in range(3):
+            shadow.monitor()
+    assert alert.call_count == 1

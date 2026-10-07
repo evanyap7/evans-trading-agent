@@ -375,6 +375,12 @@ class ExecutionEngine:
                 return coid, row
         return None, None
 
+    def exit_is_new(self, decision_id: str, today: date) -> bool:
+        """True when `exit_trade` would send a fresh attempt now, False if one already exists (live, shadow or filled) or
+        today's attempts are used up. Callers use it to alert once per attempt, not once per monitor pass."""
+        coid, existing = self._exit_slot(decision_id, today)
+        return coid is not None and existing is None
+
     def exit_trade(self, decision_id: str, symbol: str, qty: int, ref_price: float, reason: str, today: date,
                    *, is_short: bool = False) -> OrderState:
         """Cancel the protective stop, then close the position with a marketable limit.

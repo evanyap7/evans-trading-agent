@@ -686,10 +686,13 @@ class Orchestrator:
                     outcome = self.exec.raise_protective_stop(t["decision_id"], t["symbol"], qty, new_stop, current_price=q.last)
                     rep.add(f"{t['symbol']}: trail stop {t['stop_loss']} -> {new_stop}: {outcome}")
             if reason:
+                fresh = self.exec.exit_is_new(t["decision_id"], today)
                 state = self.exec.exit_trade(t["decision_id"], t["symbol"], qty, ref, reason, today,
                                              is_short=is_short)
                 rep.add(f"{t['symbol']}: {reason} -> {'BUY_COVER' if is_short else 'SELL'} {qty} {state.value}")
                 try:
+                    if not fresh:  # same exit already sent (or shadowed) on an earlier pass: do not re-alert
+                        continue
                     if is_short:
                         from .alerts import alert_short_covered
                         alert_short_covered(t["symbol"], qty, ref, t["entry_price"],
