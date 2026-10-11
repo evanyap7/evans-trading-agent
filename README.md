@@ -1,5 +1,7 @@
 # Evan's Trading Agent
 
+[![CI](https://github.com/evanyap7/evans-trading-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/evanyap7/evans-trading-agent/actions/workflows/ci.yml)
+
 **Author**: Evan Yap ([@evanyap7](https://github.com/evanyap7))
 
 An autonomous swing-trading agent for a **Webull Singapore** account, built from
