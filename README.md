@@ -2,12 +2,51 @@
 
 [![CI](https://github.com/evanyap7/evans-trading-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/evanyap7/evans-trading-agent/actions/workflows/ci.yml)
 
-**Author**: Evan Yap ([@evanyap7](https://github.com/evanyap7))
+**Author**: Evan Yap ([@evanyap7](https://github.com/evanyap7)), SUTD Engineering Systems & Design
 
-An autonomous swing-trading agent for a **Webull Singapore** account. A rule-based momentum agent proposes trades. Deterministic code verifies
-them, sizes them, and approves or rejects them. The official Webull SDK
-executes them. No human approval step, and no way for the agent to go around
-the envelope.
+A systematic trading system for a small **Webull Singapore** account, built to answer one question honestly:
+*is there an edge here, and how would I know?* It has a rule-based momentum agent, a deterministic risk and
+execution layer, and a walk-forward research harness that tests every idea against luck-adjusted statistics before
+it gets near money.
+
+**Short answer so far: no edge found.** Four independent studies on liquid US equities and ETFs all say the same
+thing, and each one is written up with its method and caveats.
+
+## Research findings
+
+| Study | Question | Result | Report |
+|---|---|---|---|
+| Classic quant signals | Do momentum, reversal, low-vol (51 US stocks) or trend following (18 and 25 ETFs) beat buy-and-hold out of sample? | **No.** Deflated Sharpe 0.05 to 0.65, all below the ~0.95 bar. Trend following cut risk (about a third of the volatility, half the drawdown), not return. | [quant-research-report](docs/quant-research-report.md) |
+| Insider buying | Do SEC Form 4 open-market purchases predict returns? | **No usable edge.** A small raw effect, mostly survivorship and noise, that vanishes inside sizing, stops and risk limits. | [insider-signal-study](docs/insider-signal-study.md) |
+| LLM agent | Does a Claude agent (Haiku screen, Opus proposal) beat a free momentum baseline? | **No.** Sharpe lead of 0.03, lower win rate, about $27 a year in API cost. Removed. | [backtest-llm-vs-baseline-2024](docs/backtest-llm-vs-baseline-2024.md) |
+| Momentum baseline | Does the live rule set beat SPY? | **Matches it, does not beat it** (+24.7% vs +25.6% in 2024; +66.8% vs +70.1% over 2022 to 2026 at roughly half the drawdown). | same reports |
+
+Walk-forward cross-sectional long/short on 51 stocks: out-of-sample Sharpe **-0.22** (95% interval -1.33 to 0.74)
+against 1.46 for equal-weight on the same stocks, with beta near zero, so the shortfall is not market exposure.
+
+### Method
+
+What the research layer does, so a negative result can be trusted:
+
+- **No lookahead, tested.** A test rewrites the future of a price series and asserts past signals do not move.
+- **Walk-forward selection.** Parameters are chosen on 2 years, scored only on the next 6 months, then rolled. Only
+  out-of-sample stretches are joined into the reported series.
+- **Luck correction.** Deflated Sharpe ratio (Bailey & Lopez de Prado), which accounts for skew, kurtosis, sample length
+  and the number of variants tried, plus a block-bootstrap interval on the Sharpe.
+- **Trial counting.** Every grid and every earlier study raises the hurdle for the next one (30 trials, then 36).
+- **Pre-registration.** The extra diversifier ETFs were written down before the wider run (self-attested, no external timestamp).
+- **Stated costs and biases.** 10 bps on the stock book, 5 bps on ETFs, 50 bps a year borrow. The universe is today's
+  survivors, so absolute returns are inflated. Both are listed under each report's caveats.
+
+```bash
+uv run trading-agent quant-research                                   # cross-sectional, 6 years
+uv run trading-agent quant-research --strategy trend --diversified    # 25-ETF trend following
+```
+
+The maths behind the signals and sizing (descriptive stats, Bayes, Monte Carlo, regression) is in
+[algorithmic_trading_maths.md](docs/algorithmic_trading_maths.md).
+
+## System design
 
 ```
 research (after US close)  evidence ─► agent ─► verifier ─► sizing ─► risk ─► queue
@@ -15,79 +54,32 @@ execute  (09:45 ET)        fresh quotes ─► re-verify ─► re-size ─► f
 monitor  (every 5 min)     reconcile ─► circuit breakers ─► stop / target / time-stop exits
 ```
 
-> No model can promise profits. This system aims for controlled risk and reliable
-> execution, and for failures to stay contained. Whether it has an edge is
-> something you measure in shadow mode before you trust it with real money.
+The agent only proposes `OPEN` / `CLOSE` / `NO_TRADE`. Deterministic code verifies, sizes and approves or rejects, and the
+agent never picks a quantity or goes around the risk envelope. The design goal is controlled risk and contained
+failures, not a promise of profit.
 
-## What exists today (Phases 0, 1, 4 and most of 5)
+| Concern | Approach | Where |
+|---|---|---|
+| Trade verification | Grounding, freshness, price collar, ATR stop, R:R, probability edge over break-even, net edge after costs | `verifier.py` |
+| Sizing | Fractional Kelly, capped by a per-trade risk budget and 6% total portfolio risk | `portfolio.py` |
+| Risk limits | Every limit in `config/risk_limits.yaml`; absurd values (>100% exposure, shorts, margin, >5% per trade) refuse to load | `risk.py`, `config.py` |
+| Execution | Deterministic client order IDs, preview check, no blind retries, 5xx treated as ambiguous and reconciled | `execution.py` |
+| Stops | Broker-side GTC stop after every fill, re-armed if missing; ratchets to breakeven at +1R and trails from +2R | `execution.py` |
+| Audit | Append-only, hash-chained SQLite ledger with a tamper check (`verify-ledger`) | `ledger.py` |
+| Fail-safe | Reconciliation, auto and manual kill switch, drawdown breaker, one-cycle-at-a-time lock | `orchestrator.py`, `killswitch.py` |
+| Data | Webull quotes, Databento historical and live, yfinance fallback; no invented prices, stale or one-sided quotes block entries | `broker/webull.py`, `databento_data.py` |
+| Backtesting | Replays daily bars through the live agent, verifier, sizing and risk engine; stop assumed first when a bar touches both | `backtest.py` |
 
-The Claude LLM agents were built, backtested on 2024 and removed: no edge over the baseline and about
-$27 a year in API cost ([report](docs/backtest-llm-vs-baseline-2024.md)).
+About 6,500 lines of Python and **191 tests** (CI runs them offline on every push) covering look-ahead, idempotency,
+stop re-arming, kill-switch behaviour and the quant statistics.
 
-| Blueprint component | Where |
-|---|---|
-| Structured trade contract (`OPEN` / `CLOSE` / NO_TRADE) | `schemas.py` |
-| Real-time multi-source financial news & macro evidence (Bloomberg, WSJ, Economist, Reuters, NYSE) | `news.py` |
-| Telegram personal assistant bot alerts & 9:00 AM daily executive morning briefing | `alerts.py` |
-| Rule-based momentum baseline, the only agent; it matches SPY in 2024 but does not beat it | `agents.py` |
-| Quantitative Mathematics Engine: descriptive stats, dispersion, Bayes, Monte Carlo, linear algebra, linear regression & momentum calculus | `math_quant.py` ([docs](docs/algorithmic_trading_maths.md)) |
-| Point-in-time price features & quantitative evidence | `features.py` |
-| Quant verifier: grounding, freshness, price collar, ATR stop, R:R, probability edge vs break-even, net edge after costs | `verifier.py` |
-| SEC Form 4 insider-buy data and study, off by default: no edge on large caps ([study](docs/insider-signal-study.md)) | `insider.py`, `scripts/insider_study.py` |
-| Walk-forward research harness: cross-sectional and trend signals, deflated Sharpe, trial counting; no edge found ([report](docs/quant-research-report.md)) | `quant/`, `trading-agent quant-research` |
-| Position sizing from fractional Kelly, risk budget and caps (the agent never picks quantity) | `portfolio.py` |
-| Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |
-| Capital rotation & pre-existing portfolio position exit engine | `orchestrator.py`, `execution.py` |
-| Idempotent execution: deterministic client order IDs, preview check, no blind retries | `execution.py` |
-| Broker-side GTC stop-loss placed after each fill (re-armed if missing) | `execution.py` |
-| Append-only, hash-chained ledger (SQLite) | `ledger.py` |
-| Reconciliation, kill switch (auto + operator), drawdown breaker | `orchestrator.py`, `killswitch.py` |
-| Databento market data adapter (Historical OHLCV, Live streaming, symbology & cost guard) | `databento_data.py` ([docs](docs/databento_integration.md)) |
-| Webull SG adapter (official SDK v3.0.2 + resilient yfinance / Databento fallback, UAT + prod) | `broker/webull.py` |
-| Simulated broker for tests and offline runs | `broker/simulated.py` |
-| unit and integration tests covering the blueprint's failure list | `tests/` |
+## Backtest: baseline agent and the cash sweep
 
-**Not built yet:** Postgres/Timescale database backend,
-web dashboard, real-time WebSocket order-event stream (gRPC/polling used instead), options (Phase 7;
-Webull's own MCP config marks SG as `supports_options=False`).
+Early runs showed the agent holding only 17 to 32% of the account, so most of the money sat in cash. An optional sweep
+parks idle cash in an index ETF (`SPYM`, about $90 a share so a small account can hold whole shares) and sells it to fund entries.
+Sweep shares are invisible to the agent and the breakers, so a market dip does not trip the kill switch.
 
-## Edge, Kelly and scan cadence
-
-The rules below come from a Polymarket agent (scan often, only bet when the price is off by more
-than 8%, size with Kelly, never have more than 6% at risk). Here they are applied to stocks:
-
-- **Mispricing gate.** A stop/target pair has a break-even win rate of `down / (up + down)`, which is
-  33% for a 2:1 setup. The verifier rejects any idea whose `confidence` doesn't beat that by
-  `signal.min_probability_edge` (0.08).
-- **Kelly sizing.** Risk per trade is `kelly_fraction x (p - (1 - p) / reward_risk)` of equity (quarter
-  Kelly by default). It is still capped by `requested_risk_pct` and `max_risk_per_trade_pct`. An idea with no
-  Kelly edge gets no size.
-- **6% at risk.** `max_portfolio_risk_pct: 6.0` caps the sum of `(price - stop) x qty` across open positions.
-- **10-minute scans.** With `CONTINUOUS_TRADING=true`, the research pass runs every
-  `SCAN_INTERVAL_MINUTES` (default 10) during regular hours.
-
-## Cash sweep (idle cash in an index ETF)
-
-Backtests showed the agent holding only 17-32% of the account on average, so most of the money sat in
-cash while the market rose. With `cash_sweep.enabled: true` in `config/risk_limits.yaml`:
-
-- **Execute** (09:45 ET) buys whole shares of `cash_sweep.symbol` with cash above `reserve_pct` of equity
-  and above what working entry orders need. Default `SPYM`, an S&P 500 ETF at about $90 a share, so a
-  small account can hold whole shares (SPY is about $770). Use `SGOV` (T-bills) for low risk instead.
-- **Entries are funded by selling sweep shares** at execution when cash is short. If the sale does not fill
-  within a few seconds, the entry is dropped rather than sent without cash.
-- **The sweep is not a trade.** Its shares are removed from what the agent, sizing and risk engine see, and
-  their value counts as spendable cash. So they never use up exposure, sector or portfolio-risk limits,
-  and the agent cannot close them.
-- **Breakers ignore the sweep's P&L.** The drawdown kill switch and daily-loss check watch trading equity
-  (equity minus the sweep's gain or loss), so an ordinary market dip does not halt the agent. The account
-  as a whole now moves with the market: expect index-sized drawdowns.
-- Only shares the sweep bought itself count (tracked from its own fills in the ledger). SPYM you bought by
-  hand stays a manual position. If sweep shares disappear at the broker, reconciliation fails and the kill
-  switch engages.
-- The kill switch stops sweep buys. In shadow mode sweep orders are recorded, never sent.
-
-Backtest (baseline agent, $900, 2024-01-02 to 2026-09-25, kill switch on as live):
+$900 start, 2024-01-02 to 2026-09-25, kill switch on as live:
 
 | | Return | Max drawdown | Last 12 months |
 |---|---|---|---|
@@ -96,104 +88,55 @@ Backtest (baseline agent, $900, 2024-01-02 to 2026-09-25, kill switch on as live
 | SPYM sweep | +60.8% | -14.5% | +47.4% |
 | SPY buy-and-hold | +68.5% | -18.8% | +18.5% |
 
-The SPYM sweep's own contribution is about the market's return on the ~70% it holds. The rest of the
-last-12-months figure is agent trades, which are lumpy at one share each (a few names made most of it),
-so do not count on that part repeating. Check cash settlement rules for your Webull SG account before
-enabling: buying with unsettled sale proceeds and then selling again before settlement can break
-cash-account rules.
+The sweep is mostly beta: its contribution is about the market's return on the roughly 70% it holds. The agent's own trades
+are lumpy at one share each, so do not extrapolate the last-12-months figure.
 
-## Setup
+**Known biases:** the universe is today's list, no historical news is replayed, and the sample covers few regimes (2024 was a
+strong bull year). Backtests are optimistic on all three.
 
 ```bash
-cd ~/trading-agent
+uv run trading-agent backtest --start 2024-01-02                              # baseline, live limits
+uv run trading-agent backtest --start 2024-01-02 --cash 900 --sweep SPYM      # A/B the cash sweep
+```
+
+Output includes expectancy in R, win rate, profit factor, drawdown, Sharpe, rejection reasons, and two benchmarks: SPY
+buy-and-hold and SPY held only above its 200-day average.
+
+## Run it
+
+```bash
 uv sync --extra webull
-cp .env.example .env         # then fill it in yourself; never paste keys into a chat
-uv run pytest                # 176 passing
-uv run trading-agent research --broker sim   # offline dry run on synthetic data
+cp .env.example .env                           # fill in yourself; never paste keys into a chat
+uv run pytest                                  # 191 passing, no credentials needed
+uv run trading-agent research --broker sim     # offline dry run on synthetic data
 ```
 
-## Going live, one gate at a time
-
-1. **UAT read-only:** set `WEBULL_ENVIRONMENT=uat`, then run `trading-agent accounts` → put the id in
-   `WEBULL_ACCOUNT_ID` → run `trading-agent probe`. Check that balance, positions and snapshot fields
-   match what `broker/webull.py` expects.
-2. **Shadow mode** (`TRADING_MODE=shadow`, the default): schedule `tick --agent baseline`
-   (`scripts/com.trading-agent.tick.plist`). Everything runs except sending orders. Run it for weeks
-   and compare shadow results against the backtest.
-3. **UAT orders:** `TRADING_MODE=broker`, `WEBULL_ENVIRONMENT=uat`. Exercise preview, fills, stops,
-   cancels and the kill switch against Webull's test environment.
-4. **Live execution:** `WEBULL_ENVIRONMENT=prod`, `TRADING_MODE=broker`, **and** set
-   `live_trading.enabled: true` in `config/risk_limits.yaml`.
-
-Real orders need all three switches. With any one of them off, entries are risk-rejected.
-
-## Telegram Personal Assistant Integration
-
-The agent dispatches real-time events to your Telegram bot:
-- **Nightly Research Summaries**: Dispatched after market close with ingested macro evidence and queued setups.
-- **Order Executions & Fills**: Real-time notifications for live submissions and broker-side GTC stops.
-- **Automated Exits & Capital Rotation**: Instant alert when take-profit, stop-loss, or rotation exits execute.
-- **Daily 9:00 AM Morning Briefing**: Complete portfolio snapshot, 24h P&L, open positions with unrealized gains, and analyst stance delivered at 09:00 SGT (`trading-agent morning-report`).
-
-## Backtesting
+Going live is gated one step at a time: UAT read-only, then shadow mode (everything runs except sending orders), then UAT
+orders, then production. Real orders need `WEBULL_ENVIRONMENT=prod`, `TRADING_MODE=broker` **and**
+`live_trading.enabled: true`; with any one off, entries are risk-rejected.
 
 ```bash
-uv run trading-agent backtest --start 2024-01-02                  # baseline, $1,500, live limits
-uv run trading-agent backtest --start 2024-01-02 --no-halt        # keep going after the kill switch trips
-uv run trading-agent backtest --start 2024-01-02 --no-trailing    # A/B the trailing stop
-uv run trading-agent backtest --start 2024-01-02 --cash 900 --sweep SPYM   # A/B the cash sweep (--no-sweep)
+uv run trading-agent status          # kill switch, trades, orders, recent events
+uv run trading-agent kill --reason "..."   # stop new orders, cancel working entries
+uv run trading-agent verify-ledger   # detect tampering with the audit log
 ```
 
-`backtest.py` replays daily bars through the live agent, verifier, sizing, risk engine and trailing
-stop. Research at each close sees only bars up to that day. Entries fill at the next open as DAY limits.
-Stops, targets and gaps come from the daily range, and when a bar touches both, the stop is assumed first.
-The run prints expectancy in R, win rate, profit factor, drawdown, Sharpe, exit reasons, the most common
-rejection reasons, the average share of equity invested, and two benchmarks: SPY buy-and-hold (with the
-excess return over it) and SPY held only while above its 200-day average. If the agent cannot beat both
-its trades add nothing. The run writes `summary.json`, `trades.csv` and `equity.csv` under
-`state/backtests/`. Bars and earnings dates are cached in `state/backtest_cache/`.
-
-Results are optimistic in three known ways: the universe is today's list, no historical news is
-replayed, and results cover few market regimes (2024 was a strong bull year).
-
-## Operating
-
-```bash
-uv run trading-agent status                     # kill switch, trades, orders, recent events
-uv run trading-agent morning-report --broker webull # send fresh 9:00 AM briefing to Telegram
-uv run trading-agent kill --reason "..."        # stop new orders; cancel working entries
-uv run trading-agent unkill
-uv run trading-agent verify-ledger              # detect tampering with the audit log
-```
-
-Earnings dates come from Webull's earnings calendar at every research and execute cycle (if the next
-report is not listed yet, it is estimated as the last one plus a quarter). `config/events.yaml` overrides
-the feed. Individual stocks with no date are blocked from new entries. ETFs are not affected.
-`market_calendar.py` holds NYSE holidays through 2027 and refuses to run after that until extended.
+Telegram alerts cover nightly research summaries, fills, exits and a 9:00 SGT morning briefing.
 
 ## Safety guarantees
 
-- **No invented market data.** Quotes come from Webull (Nasdaq Basic). The yfinance fallback uses only real
-  bid/ask and the exchange timestamp; a one-sided or stale quote blocks new entries instead of being
-  filled in. Bars without a timestamp are dropped.
-- **The kill switch always hits the same file.** Relative `STATE_DIR` / `WEBULL_TOKEN_DIR` resolve against
-  the project root, so `trading-agent kill` works from any directory.
-- **Positions are not left without a stop.** Each monitor pass re-arms a missing or rejected broker-side
-  stop (bounded, and never while an exit sell is working). A rejected exit is retried up to
-  `max_exit_attempts_per_day`; after that the stop is left in place.
-- **Winners run; stops only ratchet up.** Exits come from the stop, the take-profit or the time stop. From +1R
-  the stop moves to breakeven, and from +2R it trails 1.5R behind price (`trail_*` in `risk_limits.yaml`).
-  The broker-side stop is replaced only after the old one's cancel is confirmed. `daily_profit_target_usd` is
-  reported but never triggers a sale.
-- **Exits need a real price.** No sell is priced off a zero bid or a quote older than 15 minutes.
-- **Agent exits need our own evidence.** Selling (including manual holdings, when
-  `agent_may_close_manual_positions` is on) must cite price/position data, never news alone.
-- **Liquidity floor for entries:** `min_price_usd` and `min_avg_dollar_volume_usd`.
-- **One cycle at a time.** A lock (`state/agent.lock`) stops a manual run overlapping the scheduled tick, and
-  network calls time out so a hung feed cannot stall monitoring.
-- **A crash in execute or research never skips monitor**, and it sends a Telegram alert.
-- **Alerts are not silently dropped.** Telegram messages fall back to plain text if Markdown is rejected.
-- **Limits are sanity-checked on load.** Values such as >100% exposure, margin/short/options switches or
-  >5% risk per trade refuse to load instead of trading.
-- **Webull order status is matched exactly** by client order id, and 5xx submission errors are treated as
-  ambiguous (reconciled, not assumed rejected).
+- **No invented market data.** One-sided, stale or timestamp-less quotes block entries instead of being filled in.
+- **No position without a stop.** Each monitor pass re-arms a missing or rejected broker-side stop; exits are never priced off a zero bid or a quote older than 15 minutes.
+- **Stops only ratchet up.** The broker-side stop is replaced only after the old one's cancel is confirmed.
+- **Agent exits need price or position evidence**, never news alone.
+- **A crash in execute or research never skips monitor**, and it sends an alert.
+- **Limits are sanity-checked on load.** Bad config refuses to start rather than trade.
+- **Webull order status is matched exactly** by client order ID.
+
+## Not built
+
+Postgres/Timescale backend, web dashboard, WebSocket order events (polling is used), options (Webull SG does not support them).
+**Next research step:** a universe where small capital can compete (liquid small caps) with a point-in-time constituent
+list to remove survivorship bias.
+
+> Not investment advice. The default mode is shadow, and the evidence so far says to hold the index.
