@@ -2044,6 +2044,9 @@ source = { editable = "." }
 dependencies = [
     { name = "databento" },
     { name = "feedparser" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pandas" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -2060,6 +2063,8 @@ dev = [
 requires-dist = [
     { name = "databento", specifier = ">=0.87.0" },
     { name = "feedparser", specifier = ">=6.0.14" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "pandas", specifier = ">=2.2" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },

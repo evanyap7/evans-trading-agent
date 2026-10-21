@@ -11,6 +11,8 @@ dependencies = [
     "yfinance>=1.7.0",
     "feedparser>=6.0.14",
     "databento>=0.87.0",
+    "numpy>=2.0",
+    "pandas>=2.2",
 ]
 
 [dependency-groups]
