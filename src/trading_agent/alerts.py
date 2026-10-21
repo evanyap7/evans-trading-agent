@@ -38,7 +38,7 @@ def send_telegram(text: str, *, always: bool = False) -> bool:
         text = "📝 [PAPER — no real money]\n" + text
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     # Markdown first; if Telegram rejects the formatting (an unbalanced `_` or `*` in a symbol, reason
-    # or LLM thesis), resend as plain text so a critical alert is never silently lost.
+    # or agent thesis), resend as plain text so a critical alert is never silently lost.
     for payload in ({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
                     {"chat_id": chat_id, "text": text}):
         try:

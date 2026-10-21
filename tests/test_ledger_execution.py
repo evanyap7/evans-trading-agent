@@ -149,7 +149,7 @@ def test_ledger_stores_side_and_raise_stop_direction(ledger):
 
 def test_exit_waits_for_async_stop_cancel(sim, ledger, limits, monkeypatch):
     """Webull confirms cancels a few seconds later. The exit must wait for that rather than defer and let
-    the next monitor pass re-arm the stop (which left an LLM-requested SMCI exit unsent in production)."""
+    the next monitor pass re-arm the stop (which left an agent-requested SMCI exit unsent in production)."""
     from datetime import date
 
     from trading_agent.schemas import BrokerOrderStatus

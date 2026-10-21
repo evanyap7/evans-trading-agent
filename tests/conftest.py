@@ -50,9 +50,9 @@ def seeded_broker(now: datetime, cash: float = 1_000_000) -> SimulatedBroker:
 
 
 class ScriptedAgent:
-    """Returns whatever proposal-builder it is given, so tests control the LLM's output."""
+    """Returns whatever proposal-builder it is given, so tests control the agent's output."""
 
-    name = "llm"
+    name = "baseline"
     model = "scripted"
 
     def __init__(self, build):

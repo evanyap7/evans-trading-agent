@@ -1,6 +1,6 @@
 """Typed contracts between every stage of the pipeline.
 
-The LLM may only communicate through `AgentOutput`. Everything downstream
+An agent may only communicate through `AgentOutput`. Everything downstream
 (verification, sizing, risk, execution) consumes these validated objects,
 never free text.
 """
@@ -134,7 +134,7 @@ class Evidence(Strict):
 
 
 # ---------------------------------------------------------------------------
-# LLM contract
+# Agent contract
 # ---------------------------------------------------------------------------
 
 
@@ -150,7 +150,7 @@ class ExitPlan(Strict):
 
 
 class TradeProposal(Strict):
-    """An LLM request to open a position (long or short). It asks for risk, not a quantity."""
+    """An agent request to open a position (long or short). It asks for risk, not a quantity."""
 
     action: Literal["OPEN"] = "OPEN"
     symbol: str = Field(pattern=SYMBOL_PATTERN)
@@ -188,7 +188,7 @@ class TradeProposal(Strict):
 
 
 class ExitProposal(Strict):
-    """An LLM request to close an existing position because the thesis changed."""
+    """An agent request to close an existing position because the thesis changed."""
 
     action: Literal["CLOSE"] = "CLOSE"
     symbol: str = Field(pattern=SYMBOL_PATTERN)
@@ -211,6 +211,7 @@ class Proposal(Strict):
     decision_id: str
     cycle_id: str
     created_at: datetime
+    # "llm" and "tiered-llm" are kept so proposals stored by the removed LLM agents still load.
     source: Literal["llm", "tiered-llm", "baseline"]
     model: str
     trade: TradeProposal

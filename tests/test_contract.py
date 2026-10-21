@@ -1,4 +1,4 @@
-"""The LLM contract rejects malformed or unsafe output before anything else sees it."""
+"""The agent contract rejects malformed or unsafe output before anything else sees it."""
 
 import pytest
 from pydantic import ValidationError

@@ -10,8 +10,8 @@ lead is 0.03 (noise) and its win rate is 3.5 points lower. Its one real advantag
 drawdown. It also costs about $27 per year in API calls on a $1,500 account, against $0 for the
 baseline. Neither strategy beats plain SPY buy-and-hold in 2024.
 
-**Recommendation:** remove the LLM layer (branch `refactor/remove-llm-layer`), keep the baseline,
-the SPYM cash sweep and the harness.
+**Recommendation:** remove the LLM layer, keep the baseline,
+the SPYM cash sweep and the harness. **Done:** merged to `master` in PR #6 (`0082515`).
 
 ## Setup
 

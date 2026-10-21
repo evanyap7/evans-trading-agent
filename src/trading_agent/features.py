@@ -1,7 +1,7 @@
 """Deterministic features computed from daily bars, packaged as citable evidence.
 
-The LLM sees these numbers and must cite their evidence IDs. The verifier
-recomputes everything it relies on from the same bars, never from LLM text.
+Agents see these numbers and must cite their evidence IDs. The verifier
+recomputes everything it relies on from the same bars, never from agent text.
 """
 
 from __future__ import annotations
