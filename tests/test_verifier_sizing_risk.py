@@ -65,7 +65,7 @@ def test_overclaimed_return_rejected(setup, limits, universe):
     assert any("exceeds the take-profit" in f for f in v.failures)
 
 
-def test_sizing_uses_risk_not_llm(setup, limits):
+def test_sizing_uses_risk_not_agent(setup, limits):
     b, ctx, _, feats = setup
     acct = b.get_account()
     s = size_order("d1", good_proposal(ctx, requested_risk_pct=1.0), acct, feats["XLK"]["avg_volume_20d"], limits)

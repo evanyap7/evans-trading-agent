@@ -86,7 +86,7 @@ $$P_t = P_{t-1} + \epsilon_t, \quad \epsilon_t \sim \text{i.i.d. } \mathcal{N}(0
 
 ### 2.3 Bayes' Theorem for Evidence Updating
 $$P(\text{Win} \mid \text{Evidence}) = \frac{P(\text{Evidence} \mid \text{Win}) \cdot P(\text{Win})}{P(\text{Evidence})}$$
-- **Application in LLM & Quantitative Sizing**:
+- **Application in Quantitative Sizing**:
   - Prior probability $P(\text{Win})$: The baseline historical win rate (e.g., 45%).
   - New evidence arrives: Bullish moving average crossover, high $R^2$ linear regression slope, positive 2nd derivative (acceleration), and macro tailwinds.
   - Calculate posterior probability to update trade `confidence` objectively before submitting to the verifier and Kelly sizer.
@@ -175,6 +175,6 @@ $$\text{VaR}_\alpha \text{ satisfies } \int_{-\infty}^{-\text{VaR}_\alpha} f(r) 
 In `Evan's Trading Agent`:
 1. **Feature Engine (`src/trading_agent/features.py`)**: Computes `sma20_above_sma50`, `median_20d`, `dist_median_20d_pct`, `range_20d_pct`, `quartile_dev_20d_pct`, `mad_20d_pct`, `linreg_slope_20d_pct`, `linreg_r2_20d`, `price_velocity_20d`, and `price_acceleration_20d`.
 2. **Deterministic Quant Module (`src/trading_agent/math_quant.py`)**: Provides pure-math functions for all the above formulas.
-3. **LLM Strategist (`src/trading_agent/agents.py`)**: Leverages Bayesian updating, trend $R^2$, and momentum calculus derivatives to shortlist high-conviction trades with minimal covariance.
+3. **Baseline Momentum Agent (`src/trading_agent/agents.py`)**: Rule-based momentum using trend $R^2$ and momentum derivatives to shortlist trades.
 4. **Quant Verifier (`src/trading_agent/verifier.py`)**: Deterministically enforces break-even win rate $p_{\text{be}} = \frac{\text{down}}{\text{up} + \text{down}}$, minimum probability edge, and net edge after slippage/fees.
 5. **Portfolio Sizer (`src/trading_agent/portfolio.py`)**: Uses fractional Kelly sizing $f^* = p - \frac{1-p}{b}$ derived from Bernoulli trial expectancy.

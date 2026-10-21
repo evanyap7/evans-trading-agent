@@ -1,4 +1,4 @@
-"""Turns an approved idea into a share quantity. The LLM never picks size."""
+"""Turns an approved idea into a share quantity. The agent never picks size."""
 
 from __future__ import annotations
 
