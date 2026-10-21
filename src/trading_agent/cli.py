@@ -181,6 +181,14 @@ def main(argv: list[str] | None = None) -> None:
     db_bars.add_argument("--end", default=None, type=_date, help="end date YYYY-MM-DD")
     db_bars.add_argument("--dataset", default=None, help="Databento dataset, default EQUS.SUMMARY")
 
+    qr = sub.add_parser("quant-research", help="walk-forward test of the cross-sectional signals with luck-adjusted statistics")
+    qr.add_argument("--strategy", choices=["cross-section", "trend"], default="cross-section",
+                    help="cross-section: long/short stock ranking; trend: time-series momentum on the ETF set")
+    qr.add_argument("--diversified", action="store_true",
+                    help="trend only: add the pre-registered bond/commodity/dollar/ex-US ETFs to the universe ETFs")
+    qr.add_argument("--start", type=_date, default=None, help="first trading day (default: 6 years ago, 10 for trend)")
+    qr.add_argument("--end", type=_date, default=None, help="last trading day (default: yesterday)")
+    qr.add_argument("--out", type=Path, default=None, help="directory for quant_report.json")
     args = p.parse_args(argv)
 
     settings = load_settings()
@@ -214,6 +222,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "backtest":
         socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
         _backtest(args, settings)
+    elif args.cmd == "quant-research":
+        socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
+        _quant_research(args, settings)
 
 
 def _date(s: str):
@@ -258,6 +269,38 @@ def _backtest(args, settings) -> None:
     out = args.out or settings.state_dir / "backtests" / datetime.now().strftime("%Y%m%d-%H%M%S")
     result.write(out)
     print(f"wrote {out}/summary.json, trades.csv, equity.csv")
+
+
+def _quant_research(args, settings) -> None:
+    from datetime import date, timedelta
+
+    from .backtest import load_bars
+    from .quant.research import build_closes, research_report
+    from .quant.trend import DIVERSIFIERS, PRIOR_TRIALS, PRIOR_TRIALS_AFTER_UNIVERSE_TEST, trend_report
+
+    universe = load_universe()
+    trend = args.strategy == "trend"
+    end = args.end or date.today() - timedelta(days=1)
+    start = args.start or end - timedelta(days=(10 if trend else 6) * 365)
+    kind = "ETF" if trend else "EQUITY"
+    symbols = sorted(s for s, sec in universe.symbols.items() if sec.type == kind)
+    if trend and args.diversified:
+        symbols = sorted(set(symbols) | set(DIVERSIFIERS))
+    print(f"loading daily bars for {len(symbols)} {kind} symbols ...")
+    closes = build_closes(load_bars(symbols, start, end, settings.state_dir / "backtest_cache"))
+    closes = closes.loc[str(start):]  # drop the warm-up history load_bars prepends
+    closes = closes.dropna(axis=1, thresh=int(len(closes) * 0.9))  # symbols that IPO'd mid-sample would bias ranks
+    if trend:
+        prior = PRIOR_TRIALS_AFTER_UNIVERSE_TEST if args.diversified else PRIOR_TRIALS
+        report = trend_report(closes.dropna(), prior_trials=prior)
+    else:
+        report = research_report(closes)
+    print(json.dumps(report, indent=2, default=str))
+    out = args.out or settings.state_dir / "quant"
+    out.mkdir(parents=True, exist_ok=True)
+    name = ("trend_diversified_report.json" if args.diversified else "trend_report.json") if trend else "quant_report.json"
+    (out / name).write_text(json.dumps(report, indent=2, default=str))
+    print(f"wrote {out}/{name}")
 
 
 def _calibration(settings) -> None:
