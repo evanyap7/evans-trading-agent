@@ -11,28 +11,16 @@ Sends real-time updates directly to Evan's Telegram personal assistant:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 import requests
-from dotenv import dotenv_values, load_dotenv
-
-ASSISTANT_ENV = Path("/Users/evanyap7/telegram-personal-assistant/.env.local")
-
+from dotenv import load_dotenv
 
 def get_telegram_config() -> tuple[str, str]:
+    """Only this agent's own TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Unset means alerts are off."""
     load_dotenv()
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        if ASSISTANT_ENV.exists():
-            try:
-                vals = dotenv_values(ASSISTANT_ENV)
-                token = token or str(vals.get("TELEGRAM_BOT_TOKEN", "")).strip()
-                chat_id = chat_id or str(vals.get("TELEGRAM_ALLOWED_USER_ID", "")).strip()
-            except Exception:
-                pass
-    return token, chat_id
+    return (os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(),
+            os.environ.get("TELEGRAM_CHAT_ID", "").strip())
 
 
 # Set by the Orchestrator: shadow mode is silent. Pass always=True for messages that must get through anyway.
