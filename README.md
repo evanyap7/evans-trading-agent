@@ -4,8 +4,7 @@
 
 **Author**: Evan Yap ([@evanyap7](https://github.com/evanyap7))
 
-An autonomous swing-trading agent for a **Webull Singapore** account, built from
-`trading-agent.md`. A rule-based momentum agent proposes trades. Deterministic code verifies
+An autonomous swing-trading agent for a **Webull Singapore** account. A rule-based momentum agent proposes trades. Deterministic code verifies
 them, sizes them, and approves or rejects them. The official Webull SDK
 executes them. No human approval step, and no way for the agent to go around
 the envelope.
