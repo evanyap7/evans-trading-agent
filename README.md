@@ -34,6 +34,7 @@ $27 a year in API cost ([report](docs/backtest-llm-vs-baseline-2024.md)).
 | Point-in-time price features & quantitative evidence | `features.py` |
 | Quant verifier: grounding, freshness, price collar, ATR stop, R:R, probability edge vs break-even, net edge after costs | `verifier.py` |
 | SEC Form 4 insider-buy data and study, off by default: no edge on large caps ([study](docs/insider-signal-study.md)) | `insider.py`, `scripts/insider_study.py` |
+| Walk-forward research harness: cross-sectional and trend signals, deflated Sharpe, trial counting; no edge found ([report](docs/quant-research-report.md)) | `quant/`, `trading-agent quant-research` |
 | Position sizing from fractional Kelly, risk budget and caps (the agent never picks quantity) | `portfolio.py` |
 | Deterministic risk engine: every limit in `config/risk_limits.yaml` | `risk.py` |
 | Capital rotation & pre-existing portfolio position exit engine | `orchestrator.py`, `execution.py` |
