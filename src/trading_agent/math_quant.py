@@ -277,7 +277,7 @@ def monte_carlo_trade_simulation(
 # 3. Linear Algebra & Portfolio Matrix Operations
 # ============================================================================
 
-def portfolio_variance(weights: Sequence[float], cov_matrix: np.ndarray) -> float:
+def portfolio_variance(weights: Sequence[float] | np.ndarray, cov_matrix: np.ndarray) -> float:
     """Portfolio variance: w^T * Sigma * w."""
     w = np.asarray(weights, dtype=float)
     if w.ndim != 1 or cov_matrix.shape != (len(w), len(w)):
@@ -286,7 +286,7 @@ def portfolio_variance(weights: Sequence[float], cov_matrix: np.ndarray) -> floa
     return max(0.0, var)
 
 
-def portfolio_volatility(weights: Sequence[float], cov_matrix: np.ndarray) -> float:
+def portfolio_volatility(weights: Sequence[float] | np.ndarray, cov_matrix: np.ndarray) -> float:
     """Portfolio standard deviation: sqrt(w^T * Sigma * w)."""
     return math.sqrt(portfolio_variance(weights, cov_matrix))
 

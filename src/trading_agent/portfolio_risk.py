@@ -42,7 +42,7 @@ def lw_cov(r: np.ndarray) -> np.ndarray:
 
 def analyze(weights: dict[str, float], px: pd.DataFrame, target_vol: float | None = None) -> dict[str, Any]:
     """weights: symbol -> fraction of equity (cash is the unallocated remainder). px: daily closes incl. SPY."""
-    w = {}
+    w: dict[str, float] = {}
     for sym, x in weights.items():  # merge the core fund into its proxy
         key = CORE_PROXY if sym in ("SPYM", "SPY") else sym
         if key in px.columns:

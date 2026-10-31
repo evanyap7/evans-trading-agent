@@ -39,7 +39,8 @@ def settle(call: dict, closes: pd.DataFrame) -> bool | None:
 
 def independent(calls: list[dict], closes: pd.DataFrame) -> list[dict]:
     """First call per (arm, symbol, horizon); the next one counts only after the previous one's horizon has run out."""
-    kept, busy_until = [], {}
+    kept: list[dict] = []
+    busy_until: dict = {}
     for c in calls:  # sorted by date
         key = (c["arm"], c["symbol"], c["horizon_days"])
         if key in busy_until and pd.Timestamp(c["date"]) <= busy_until[key]:

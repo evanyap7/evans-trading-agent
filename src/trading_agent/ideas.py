@@ -86,7 +86,8 @@ def screen(table: pd.DataFrame, px: pd.DataFrame, weights: dict[str, float], cor
         rows.append({"symbol": sym, "name": rec["Security"], "sector": rec["GICS Sector"],
                      "corr_to_portfolio": round(float(col.corr(port)), 2), "vol_pct": round(vol, 0)})
     rows.sort(key=lambda d: d["corr_to_portfolio"])
-    short, per = [], {}
+    short: list[dict] = []
+    per: dict[str, int] = {}
     for d in rows:  # lowest correlation first, at most PER_SECTOR from each gap sector
         if per.get(d["sector"], 0) < PER_SECTOR and len(short) < MAX_SHORTLIST:
             short.append(d)

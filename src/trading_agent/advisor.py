@@ -123,7 +123,7 @@ def fundamentals(symbols: list[str]) -> dict[str, dict]:
     for sym in symbols:
         if sym not in ciks:
             continue
-        row: dict[str, float] = {}
+        row: dict[str, float | str] = {}
         shares = _facts(ciks[sym], "dei", "EntityCommonStockSharesOutstanding", headers)
         if shares:
             last = shares[-1]
