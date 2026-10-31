@@ -50,7 +50,7 @@ def _parse(zpath: Path) -> list[dict]:
             return csv.DictReader(io.TextIOWrapper(z.open(name), encoding="utf-8", errors="replace"), delimiter="\t")
 
         subs = {r["ACCESSION_NUMBER"]: r for r in rows("SUBMISSION.tsv") if r["DOCUMENT_TYPE"] in ("4", "4/A")}
-        owners = {}
+        owners: dict = {}
         for r in rows("REPORTINGOWNER.tsv"):
             owners.setdefault(r["ACCESSION_NUMBER"], r["RPTOWNERCIK"])
         out = []

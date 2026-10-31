@@ -30,7 +30,7 @@ def max_drawdown(returns) -> float:
     r = np.nan_to_num(np.asarray(returns, dtype=float))
     curve = np.cumprod(1 + r)
     peak = np.maximum.accumulate(curve)
-    return float((curve / peak - 1).min()) if len(curve) else 0.0
+    return float(np.min(curve / peak - 1)) if len(curve) else 0.0
 
 
 def cagr(returns, periods: int = 252) -> float:

@@ -2,7 +2,16 @@
 
 from unittest.mock import patch
 
-from conftest import AFTER_CLOSE, IN_SESSION, ScriptedAgent, good_proposal, good_short_proposal, make_orchestrator, seeded_broker
+from conftest import (
+    AFTER_CLOSE,
+    IN_SESSION,
+    ScriptedAgent,
+    good_proposal,
+    good_short_proposal,
+    make_orchestrator,
+    seeded_broker,
+)
+
 from trading_agent.config import TradingMode
 from trading_agent.schemas import AgentOutput, OrderState
 
@@ -219,6 +228,7 @@ def test_stop_trails_to_breakeven_at_one_r(tmp_path):
 
 def test_continuous_intraday_trading_tick(tmp_path):
     from datetime import datetime
+
     from trading_agent.market_calendar import ET
 
     broker = seeded_broker(IN_SESSION)

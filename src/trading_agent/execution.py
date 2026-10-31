@@ -14,7 +14,7 @@ from .broker.base import Broker, BrokerError, OrderRequest
 from .config import RiskLimits
 from .ledger import Ledger
 from .market_calendar import add_trading_days, to_trading_date
-from .schemas import BrokerOrderStatus, OrderState, Proposal, TERMINAL_STATES, utcnow
+from .schemas import TERMINAL_STATES, BrokerOrderStatus, OrderState, Proposal, utcnow
 
 UNKNOWN_GRACE = timedelta(minutes=10)
 

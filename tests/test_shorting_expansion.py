@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from conftest import IN_SESSION, good_short_proposal, seeded_broker
+
 from trading_agent.agents import AgentContext, BaselineMomentumAgent
 from trading_agent.config import Events, load_risk_limits, load_universe
 from trading_agent.features import build_evidence
 from trading_agent.portfolio import size_order
 from trading_agent.risk import RiskContext, evaluate
-from trading_agent.schemas import Evidence
 
 
 def test_expanded_universe_contents():

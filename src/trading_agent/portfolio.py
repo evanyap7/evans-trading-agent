@@ -50,7 +50,7 @@ def size_order(decision_id: str, p: TradeProposal, account: AccountState, avg_vo
         "ADV participation": avg_volume_20d * a.max_adv_participation_pct / 100,
         "cash": max(account.cash - ex.fee_per_order_usd, 0) / limit,
     }
-    binding = min(caps, key=caps.get)
+    binding = min(caps, key=caps.__getitem__)
     qty = math.floor(caps[binding])
     if qty < 1:
         # Whole-share floor: on small accounts, if 1 share's risk is within the hard

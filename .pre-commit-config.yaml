@@ -1,0 +1,15 @@
+repos:
+  - repo: local
+    hooks:
+      - id: no-env-files
+        name: block committing .env files
+        language: fail
+        entry: "secrets belong in .env (gitignored); only .env.example may be committed"
+        files: (^|/)\.env(\..*)?$
+        exclude: \.env\.example$
+      - id: check
+        name: scripts/check.sh (compile, ruff, mypy, pytest)
+        language: system
+        entry: scripts/check.sh
+        pass_filenames: false
+        always_run: true

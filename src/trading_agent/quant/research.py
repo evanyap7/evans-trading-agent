@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .signals import DEFAULT_WEIGHTS, composite, raw_signals
-from .stats import (block_bootstrap_sharpe, cagr, deflated_sharpe, max_drawdown, probabilistic_sharpe, sharpe)
+from .stats import block_bootstrap_sharpe, cagr, deflated_sharpe, max_drawdown, probabilistic_sharpe, sharpe
 
 TRAIN_DAYS, TEST_DAYS = 504, 126  # two years to choose, six months to judge
 

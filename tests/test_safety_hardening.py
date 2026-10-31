@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from conftest import AFTER_CLOSE, IN_SESSION, ScriptedAgent, good_proposal, make_orchestrator, seeded_broker
 from pydantic import ValidationError
 
-from conftest import AFTER_CLOSE, IN_SESSION, ScriptedAgent, good_proposal, make_orchestrator, seeded_broker
 from trading_agent.config import RiskLimits, load_risk_limits
 from trading_agent.schemas import AgentOutput, Evidence, ExitProposal, OrderState, Position, Quote
 
@@ -82,6 +82,7 @@ def test_webull_get_order_never_returns_a_different_order():
 
 def test_webull_call_with_retry_retries_on_timeout():
     from webull.core.exception.exceptions import ClientException
+
     from trading_agent.broker.webull import WebullBroker
 
     b = WebullBroker.__new__(WebullBroker)

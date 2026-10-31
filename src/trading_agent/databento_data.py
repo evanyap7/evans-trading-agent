@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from .schemas import Bar, Quote
+from .schemas import Bar
 
 logger = logging.getLogger(__name__)
 

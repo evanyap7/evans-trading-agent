@@ -5,8 +5,14 @@ import pandas as pd
 
 from trading_agent.quant.research import Config, long_short_returns, research_report, walk_forward
 from trading_agent.quant.signals import composite, raw_signals, zscore
-from trading_agent.quant.stats import (block_bootstrap_sharpe, deflated_sharpe, expected_max_sharpe, max_drawdown,
-                                       probabilistic_sharpe, sharpe)
+from trading_agent.quant.stats import (
+    block_bootstrap_sharpe,
+    deflated_sharpe,
+    expected_max_sharpe,
+    max_drawdown,
+    probabilistic_sharpe,
+    sharpe,
+)
 
 
 def panel(n_days=1500, n_sym=40, drift_per_rank=0.0, seed=1):

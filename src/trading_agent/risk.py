@@ -80,7 +80,6 @@ def evaluate(order: SizedOrder, instrument_type: str, holding_period_days: int, 
     # Exposure calculations: separate long and short
     long_committed = sum(r.quantity * r.price for r in ctx.open_risks if r.quantity > 0)
     short_committed = sum(abs(r.quantity) * r.price for r in ctx.open_risks if r.quantity < 0)
-    committed = long_committed + short_committed  # gross exposure
     sector_committed = sum(abs(r.quantity) * r.price for r in ctx.open_risks
                            if sec and (s := universe.get(r.symbol)) and s.sector == sec.sector)
 

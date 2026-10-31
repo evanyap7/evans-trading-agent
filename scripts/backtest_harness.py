@@ -19,12 +19,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Sequence
 
 # Anchor project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -39,15 +36,11 @@ from trading_agent.backtest import Backtester, load_bars
 from trading_agent.config import (
     CONFIG_DIR,
     CashSweep,
-    Events,
-    RiskLimits,
     Security,
     Universe,
-    load_events,
     load_risk_limits,
     load_universe,
 )
-from trading_agent.schemas import Bar
 
 TOP100_CONFIG = CONFIG_DIR / "universe_top100.yaml"
 CACHE_DIR = PROJECT_ROOT / "state" / "backtest_cache"

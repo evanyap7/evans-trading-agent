@@ -1,8 +1,8 @@
 from datetime import date, timedelta
 
 import pytest
-
 from conftest import IN_SESSION, good_proposal, good_short_proposal, seeded_broker
+
 from trading_agent.agents import AgentContext
 from trading_agent.config import Events
 from trading_agent.features import build_evidence
