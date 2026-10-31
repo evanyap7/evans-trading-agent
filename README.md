@@ -59,7 +59,33 @@ The agent only proposes `OPEN`, `CLOSE` or `NO_TRADE`. Deterministic code verifi
 | Audit | Append-only, hash-chained SQLite ledger with a tamper check |
 | Fail-safe | Reconciliation, auto and manual kill switch, drawdown breaker |
 
-About 6,500 lines of Python and **191 tests**, run offline in CI on every push.
+About 7,500 lines of Python and **209 tests**, run offline in CI on every push.
+
+## Portfolio advisor (read-only)
+
+Since the studies found no edge, live trading stays paused and the same machinery now serves a **read-only advisor** for
+my real account. It never places, cancels or previews an order (a test asserts the source contains none of those calls).
+It sends a daily digest to its own Telegram bot.
+
+- **Rules first.** Flags for position size, an AI-cluster cap and a quantum-basket cap, and a re-underwrite prompt at -35%
+  against cost. My written theses carry numeric "sell if" triggers that the advisor checks against SEC XBRL fundamentals,
+  8-K earnings-release text and the last EPS surprise.
+- **Risk view.** Ledoit-Wolf shrunk covariance, each holding's share of portfolio variance, PCA (one factor drives about
+  75% of the risk, roughly 1.7 independent bets), a volatility target relative to the index, and a 2022-selloff replay.
+  This is risk control, not alpha. Momentum and volatility are shown as information, never as triggers.
+- **Buy/sell advice** is a separate model call, clamped in code to what the account can do. It is logged but unvalidated.
+- **New ideas beyond the holdings.** A mechanical screen over the S&P 500 finds sectors the account barely owns and stocks
+  that move least like the portfolio (volatility capped). A separate model call reads their SEC numbers and news and may
+  propose up to three small positions with a checkable "wrong if". The screen finds gaps, not winners, and the output is unvalidated.
+- **Pre-registered prediction log.** Two arms, `news` and `blind`, make dated up/down-versus-SPY calls into a hash-chained
+  ledger. The pass bar (n >= 300 independent calls, hit-rate lower bound above 50%, Brier under 0.25, and news beating blind in a
+  paired bootstrap) is fixed in [advisor-preregistration](docs/advisor-preregistration.md) before the first call.
+  `uv run trading-agent advise-score` reports progress and refuses a verdict before n = 300.
+
+```bash
+uv run trading-agent advise --dry-run    # print the digest, send and log nothing
+uv run trading-agent advise-score        # score the prediction log
+```
 
 ## Cash sweep backtest
 
@@ -79,7 +105,7 @@ The sweep is mostly market beta. Backtests here are optimistic: today's universe
 ```bash
 uv sync --extra webull
 cp .env.example .env                           # fill in yourself; never paste keys into a chat
-uv run pytest                                  # 191 passing, no credentials needed
+uv run pytest                                  # 209 passing, no credentials needed
 uv run trading-agent research --broker sim     # offline dry run on synthetic data
 uv run trading-agent quant-research            # the walk-forward study
 uv run trading-agent backtest --start 2024-01-02

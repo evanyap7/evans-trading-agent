@@ -13,6 +13,7 @@ dependencies = [
     "databento>=0.87.0",
     "numpy>=2.0",
     "pandas>=2.2",
+    "anthropic>=0.40",
 ]
 
 [dependency-groups]

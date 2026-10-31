@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS launchd job: runs `trading-agent advise` at 08:30 SGT (UTC+8) Tuesday to Saturday, i.e. after each US close.
+     Read-only: it never places orders. Sends to the advisor Telegram bot (ADVISOR_TELEGRAM_* in .env).
+     Install:  cp scripts/com.trading-agent.advisor.plist ~/Library/LaunchAgents/
+               launchctl load ~/Library/LaunchAgents/com.trading-agent.advisor.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.trading-agent.advisor</string>
+  <key>WorkingDirectory</key><string>/Users/evanyap7/trading-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string><string>run</string><string>trading-agent</string>
+    <string>advise</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>/Users/evanyap7/trading-agent/state/advisor.log</string>
+  <key>StandardErrorPath</key><string>/Users/evanyap7/trading-agent/state/advisor.err</string>
+</dict>
+</plist>

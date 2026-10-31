@@ -1,0 +1,31 @@
+# Confirmed by Evan 2026-10-31 (drafted from public structure, then reviewed holding by holding).
+# The advisor checks each day's news, filings and SEC numbers against these lines. Every "Sell if" is a number or a
+# dated, checkable event, so the advisor can say yes or no.
+#
+# Strategy: mostly index, plus a small labelled conviction sleeve. Multi-year horizon, tolerate about -30%.
+# This is risk control, not a claim of stock-picking edge. The repo's studies tested systematic signals only; they
+# say nothing about discretionary picks either way, so the sleeve is sized as if it has no edge.
+#   Core      : about 75% broad index (SPYM). Sized by a 2022-style replay: today's mix loses about 40% (beta 1.9),
+#               a 75% core loses about 29%, a 55% core about 32%. New cash goes to the core until it gets there.
+#   Satellite : about 25% in total. One name soft cap 15%, act above 20%.
+#   Clusters  : AI cluster (NVDA, PLTR, VST, INTC, SCHG) at most 30%; quantum basket (IONQ, RGTI, QUBT) at most 5%.
+#               They fall together, so a cap per name is not enough.
+#   Exits     : a broken thesis, not a price stop. Down 35% from cost means re-underwrite as if buying today (a
+#               prompt to think, not an automatic sale). Never average down to lower the cost.
+#   Size floor: under about 2% a position cannot move the account. Build it to a real size or sell it.
+#   Trades    : do the rebalance in one or two sessions. Waiting weeks only adds timing risk.
+#   Review    : at each earnings date, and when the advisor marks a holding "review" or shows a REVIEW flag.
+# Stock-specific facts below (dividends, stakes, deals) are as of my knowledge; check them before relying on them.
+
+TSLA: "Autonomy plus energy-storage optionality on top of the car business; the price runs on the narrative, so I watch the narrative, not only earnings. Soft cap 15%, act above 20%. Sell if a robotaxi service is halted by a regulator in any launch city, or no new city launches for two consecutive quarters; or auto gross margin ex-credits falls below 15% for two quarters in a row; or the stock is 25 points behind SPY over six months with no thesis-relevant news (re-underwrite then); or a SpaceX merger changes what I own (reassess then)."
+NVDA: "Leading AI accelerator supplier with the CUDA software moat. Part of the AI cluster (30% cap with PLTR, VST, INTC, SCHG). Sell if data-centre revenue growth falls below 30% year on year for two quarters in a row, or any top-4 hyperscaler cuts its capex guidance (also a review trigger for VST), or new export limits remove more than 10% of revenue, or gross margin drops below 65%. Earnings 18 Nov."
+XOM: "Diversifier: zero correlation to NVDA over two years, steady dividend and buybacks, a hedge against an energy shock. Cap 10%. Sell if the dividend is cut or buybacks are suspended, or capex rises more than 20% above guidance without matching production growth."
+PLTR: "Government and enterprise AI software platform with fast US commercial growth, but the valuation already prices years of it. Cap 10%, AI cluster. Sell if US commercial revenue growth falls below 40% year on year, or full-year guidance is cut (earnings 3 Nov), or share count rises more than 5% in a year."
+VST: "Independent power producer that benefits from AI-driven power demand through its nuclear and gas fleet and long-term contracts. AI cluster, so it shares NVDA's hyperscaler-capex-cut trigger. Sell if no new multi-year data-centre supply deal is announced for four quarters, or a signed deal is repriced downward, or the PJM capacity price falls more than 30% at the next auction. A drop below cost alone is not a reason to sell. Earnings 6 Nov."
+INTC: "Turnaround and option on US foundry capacity, not a strength story. AI cluster. Judge it as if I were buying today; the loss against cost is sunk. The dividend is not part of the thesis (it was suspended in 2024). Sell if no outside customer is announced for 18A or 14A by the next two earnings reports, or a node slips by two quarters or more, or the share count rises more than 20% in a year (it was +11% over the last year, which is the baseline), or gross margin stays below 30% for two quarters."
+IONQ: "Speculative quantum-computing bet: pre-profit, option-like payoff. Quantum basket (IONQ, RGTI, QUBT) capped at 5% of equity in total. Sell if runway including investments falls below 18 months (about 90 months now, so this is a long way off), or share count rises more than 40% in a year (it was +28% over the last year, so that is the baseline), or revenue growth falls below 20% year on year for two quarters. Earnings 6 Nov."
+RGTI: "Speculative quantum-computing bet, same basket cap as IONQ. Sell if cash plus investments falls below 24 months of operating burn (cash alone is about 6 months; most of the rest is in securities, so read the filing), or a raise adds more than 15% to the share count at once, or a stated roadmap milestone slips two quarters or more. Earnings 11 Nov."
+QUBT: "Exit: under 1% of equity, too small to matter, and dilution is high (share count up about 40% in a year). Sell it and fold the proceeds into the core (SPYM). Earnings 10 Nov."
+UBER: "Scaled mobility and delivery platform with growing free cash flow and buybacks; the bear case is autonomous-vehicle networks bypassing it. Sell if free cash flow falls year on year for two quarters in a row, or share count stops falling (buybacks end), or a rival AV network operates in 3 or more of Uber's top-10 cities without an Uber partnership. Earnings 4 Nov."
+GRAB: "Exit: at 1.4% it cannot move the account and I hold no specific edge on it. Sell it and fold the proceeds into the core (SPYM), ideally before its 3 Nov earnings."
+SCHG: "Large-cap growth ETF held on purpose as a growth tilt beside the broad-index core. It overlaps NVDA and my other tech names, so it counts toward the AI cluster cap (30%). Sell if the cluster stays over its cap and SCHG is the cheapest piece to trim, or if I decide to hold only the broad index."

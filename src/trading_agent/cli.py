@@ -143,6 +143,10 @@ def main(argv: list[str] | None = None) -> None:
             c.add_argument("--continuous", action="store_true", default=None,
                            help="Enable continuous intraday scans every SCAN_INTERVAL_MINUTES")
     sub.add_parser("accounts")
+    ad = sub.add_parser("advise", help="read-only daily digest of the real holdings, sent to the advisor Telegram bot")
+    ad.add_argument("--dry-run", action="store_true", help="print only: no Telegram, no prediction log")
+    ad.add_argument("--force", action="store_true", help="run again even if today's digest was already sent")
+    sub.add_parser("advise-score", help="score the advisor prediction log against the pre-registered pass bar")
     pr = sub.add_parser("probe")
     pr.add_argument("--symbol", default="SPY")
     sub.add_parser("status")
@@ -198,6 +202,21 @@ def main(argv: list[str] | None = None) -> None:
         b = WebullBroker(settings.webull_account_id, settings.webull_region, settings.webull_environment)
         out = b.list_accounts() if args.cmd == "accounts" else b.probe(args.symbol)
         print(json.dumps(out, indent=2, default=str))
+    elif args.cmd == "advise":
+        from . import advisor
+        from .broker.webull import WebullBroker
+
+        socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
+        if not settings.webull_account_id:
+            sys.exit("WEBULL_ACCOUNT_ID is not set (run `trading-agent accounts`)")
+        broker = WebullBroker(settings.webull_account_id, settings.webull_region, settings.webull_environment)
+        ok = advisor.run(broker, Ledger(settings.state_dir / "advisor" / "ledger.db"),
+                         dry_run=args.dry_run, force=args.force)
+        sys.exit(0 if ok or args.dry_run else 1)
+    elif args.cmd == "advise-score":
+        from . import advisor_score
+
+        advisor_score.run(Ledger(settings.state_dir / "advisor" / "ledger.db"))
     elif args.cmd in ("research", "execute", "monitor", "tick", "morning-report", "trade-now"):
         socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
         lock_dir = settings.state_dir / args.broker if args.broker in ("sim", "paper") else settings.state_dir
