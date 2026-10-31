@@ -3,8 +3,8 @@
 from datetime import date, datetime, time, timedelta
 
 import pytest
-
 from conftest import ScriptedAgent, good_proposal
+
 from trading_agent.agents import BaselineMomentumAgent
 from trading_agent.backtest import AgentOutputCache, Backtester, OpenPosition, manage_bar
 from trading_agent.config import load_risk_limits, load_universe

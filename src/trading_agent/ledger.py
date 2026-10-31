@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .market_calendar import to_trading_date
-from .schemas import Evidence, OrderState, TERMINAL_STATES, utcnow
+from .schemas import TERMINAL_STATES, Evidence, OrderState, utcnow
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (

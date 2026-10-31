@@ -369,6 +369,7 @@ def _status(settings) -> None:
 
 def _databento(args) -> None:
     from datetime import date
+
     from .databento_data import DatabentoClient
 
     client = DatabentoClient()

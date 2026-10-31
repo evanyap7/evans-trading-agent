@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from conftest import IN_SESSION, ScriptedAgent, make_orchestrator, make_settings, seeded_broker
+
 from trading_agent import alerts
 from trading_agent.cli import _ledger_path
 from trading_agent.config import TradingMode

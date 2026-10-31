@@ -16,6 +16,7 @@ from typing import Any
 import requests
 from dotenv import load_dotenv
 
+
 def get_telegram_config() -> tuple[str, str]:
     """Only this agent's own TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Unset means alerts are off."""
     load_dotenv()
@@ -51,7 +52,7 @@ def send_telegram(text: str, *, always: bool = False) -> bool:
 
 def alert_research_summary(date_str: str, n_proposals: int, n_evidence: int, notes: list[str]) -> None:
     lines = [
-        f"📊 *Evan's Trading Agent: Research Complete*",
+        "📊 *Evan's Trading Agent: Research Complete*",
         f"📅 *Date*: `{date_str}`",
         f"🌐 *Evidence Gathered*: `{n_evidence}` items (Bloomberg, WSJ, Economist)",
         f"💡 *Actionable Proposals*: `{n_proposals}`",
@@ -277,7 +278,7 @@ def alert_killswitch(reason: str, engaged: bool = True) -> None:
     if engaged:
         msg = f"🚨 *EMERGENCY KILL SWITCH ENGAGED*\n\n*Reason*: {reason}\n*Status*: No new entries; working entry orders are cancelled. Protective stops and exits stay active."
     else:
-        msg = f"✅ *Kill Switch Released*\n\nAutonomous trading resumed."
+        msg = "✅ *Kill Switch Released*\n\nAutonomous trading resumed."
     send_telegram(msg, always=True)
 
 

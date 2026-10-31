@@ -9,8 +9,9 @@ def test_filing_date_windowing():
 
 
 def test_agent_buys_insider_cluster_only_when_enabled():
-    from trading_agent.schemas import Evidence
     from datetime import datetime, timezone
+
+    from trading_agent.schemas import Evidence
     f = {"close": 100.0, "atr14": 2.0, "dist_sma200_pct": -5.0, "dist_sma50_pct": -5.0, "ret_60d_pct": -10.0}
     now = datetime(2024, 3, 1, tzinfo=timezone.utc)
     ev = [Evidence(evidence_id="px_X", kind="price_features", symbol="X", as_of=now, source="t", payload=f),

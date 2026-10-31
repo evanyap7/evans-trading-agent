@@ -65,7 +65,7 @@ def _parse_entry_date(entry: Any) -> datetime:
     parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
     if parsed:
         try:
-            return datetime(*parsed[:6], tzinfo=timezone.utc)
+            return datetime(*parsed[:6], tzinfo=timezone.utc)  # type: ignore[misc]
         except Exception:
             pass
     return utcnow()

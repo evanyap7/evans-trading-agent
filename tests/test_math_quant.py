@@ -1,12 +1,12 @@
 """Unit tests for the quantitative mathematics engine (trading_agent.math_quant)."""
 
 import math
+
 import numpy as np
 import pytest
 
 from trading_agent.math_quant import (
     bayes_posterior_probability,
-    correlation_matrix,
     dispersion_metrics,
     linear_regression,
     matrix_properties,
