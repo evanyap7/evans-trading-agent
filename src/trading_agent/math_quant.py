@@ -197,6 +197,13 @@ def bayes_posterior_probability(
     if prior_prob >= 1.0:
         return 1.0
 
+    # Only the ratio of the likelihoods matters, so scale by the larger one: with subnormal likelihoods the
+    # products below would otherwise underflow to 0 and turn "no information" into certainty.
+    scale = max(likelihood_true, likelihood_false)
+    if scale <= 0:
+        return prior_prob
+    likelihood_true, likelihood_false = likelihood_true / scale, likelihood_false / scale
+
     p_evidence = (likelihood_true * prior_prob) + (likelihood_false * (1.0 - prior_prob))
     if p_evidence <= 0:
         return prior_prob
@@ -443,4 +450,7 @@ def volume_weighted_average_price(
     total_vol = float(np.sum(v))
     if total_vol <= 0:
         return float(np.mean(p))
-    return float(np.sum(p * v) / total_vol)
+    # Weights only matter relative to each other. Scaling by the largest keeps p * w from underflowing to 0
+    # when volumes are tiny (a subnormal volume would otherwise drag the average to 0).
+    w = v / float(np.max(v))
+    return float(np.sum(p * w) / np.sum(w))

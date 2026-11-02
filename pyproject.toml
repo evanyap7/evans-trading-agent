@@ -17,7 +17,15 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.10", "pre-commit>=3.7", "types-PyYAML"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "types-PyYAML",
+    "hypothesis>=6.170.14",
+]
 
 [project.scripts]
 trading-agent = "trading_agent.cli:main"
