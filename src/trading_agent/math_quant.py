@@ -450,4 +450,7 @@ def volume_weighted_average_price(
     total_vol = float(np.sum(v))
     if total_vol <= 0:
         return float(np.mean(p))
-    return float(np.sum(p * v) / total_vol)
+    # Weights only matter relative to each other. Scaling by the largest keeps p * w from underflowing to 0
+    # when volumes are tiny (a subnormal volume would otherwise drag the average to 0).
+    w = v / float(np.max(v))
+    return float(np.sum(p * w) / np.sum(w))
