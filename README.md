@@ -116,3 +116,11 @@ uv run trading-agent backtest --start 2024-01-02
 Going live is gated step by step: UAT read-only, shadow mode, UAT orders, then production. Real orders need `WEBULL_ENVIRONMENT=prod`, `TRADING_MODE=broker` **and** `live_trading.enabled: true`; with any one off, entries are risk-rejected. Handy commands: `status`, `kill --reason "..."`, `verify-ledger`.
 
 > Not investment advice. The default mode is shadow, and the evidence so far says to hold the index.
+
+## AI assistance
+
+I built this with AI coding assistants, including Claude Code. The instructions they work from are in `CLAUDE.md`, and the tests are how I check their work.
+
+## License
+
+The code is [MIT](LICENSE).
