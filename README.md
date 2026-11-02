@@ -6,7 +6,7 @@ I built a trading system for a small **Webull Singapore** account to find an edg
 
 The project started as one question: is there an edge here, and how would I know? So I built three things: a rule-based momentum agent, a deterministic risk and execution layer, and a walk-forward research harness that tests every idea against luck-adjusted statistics before it gets near money. Four independent studies on liquid US equities and ETFs all say the same thing, and I would rather report that plainly than tune until a chart looks good.
 
-**Status:** first real orders placed 2026-09-23, one share at a time. Live trading paused with the kill switch on 2026-10-01.
+**Status:** first real orders placed 2026-09-23, one share at a time. Live trading paused with the kill switch on 2026-10-01. The Claude proposer is gone from trade proposals, which now come from the momentum rule; the read-only [advisor](#portfolio-advisor-read-only) below still makes model calls (`advisor.py`), but it cannot place an order. `live_trading.enabled` stays `true` in `config/risk_limits.yaml` on purpose: what stops new orders is the kill-switch file `state/KILL`, which blocks every new order whatever that flag says, and lifting it is a deliberate manual step.
 
 ![2024 return: momentum baseline +24.7%, LLM agent +20.3%, SPY +25.6%](docs/img/2024-returns.svg)
 
