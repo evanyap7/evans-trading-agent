@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+from hypothesis import settings
 
 from trading_agent.agents import AgentContext
 from trading_agent.broker.simulated import SimulatedBroker
@@ -12,6 +14,11 @@ from trading_agent.ledger import Ledger
 from trading_agent.market_calendar import ET
 from trading_agent.orchestrator import Orchestrator
 from trading_agent.schemas import AgentOutput, TradeProposal
+
+# Property tests: HYPOTHESIS_PROFILE=deep for a long hunt; deadline off so a slow CI box is not a failure.
+settings.register_profile("default", max_examples=300, deadline=None)
+settings.register_profile("deep", max_examples=20_000, deadline=None)
+settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 
 # Tuesday 2026-09-22, 10:30 ET: a regular session.
 IN_SESSION = datetime(2026, 9, 22, 10, 30, tzinfo=ET)
