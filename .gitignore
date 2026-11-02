@@ -27,3 +27,6 @@ build/
 # Local tooling & OS files
 .claude/
 .DS_Store
+
+# Real holdings and theses (see config/theses.example.yaml)
+config/theses.local.yaml

@@ -87,6 +87,8 @@ uv run trading-agent advise --dry-run    # print the digest, send and log nothin
 uv run trading-agent advise-score        # score the prediction log
 ```
 
+The theses live in `config/theses.local.yaml`, which git ignores; copy `config/theses.example.yaml` to start one.
+
 ## Cash sweep backtest
 
 The agent held only 17 to 32% of the account, so I tested parking idle cash in an index ETF. $900 start, 2024-01-02 to 2026-09-25:

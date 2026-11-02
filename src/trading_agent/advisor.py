@@ -1,7 +1,7 @@
 """Read-only portfolio advisor: a daily digest of what changed in the real holdings, sent to its own Telegram bot.
 
 It reads the Webull account (`get_account` only) and never places or cancels an order. The LLM summarises news
-and SEC filings and checks them against the thesis in config/theses.yaml. It is not asked for buy/sell advice.
+and SEC filings and checks them against the thesis in config/theses.local.yaml. It is not asked for buy/sell advice.
 
 Alongside the digest it silently logs scored predictions (see docs/advisor-preregistration.md): one arm that sees
 the news and one news-blind control on the same model, so a later scorer can tell whether news adds anything.
@@ -27,12 +27,12 @@ from .news import _clean_text, _eid, _parse_entry_date, strip_untrusted_tags
 from .schemas import AccountState, Evidence, utcnow
 
 MAX_HOLDINGS = 15          # LLM sees the largest positions only; keeps the daily call small
-CONCENTRATION_PCT = 15.0   # info above this share of equity for one name (config/theses.yaml strategy)
+CONCENTRATION_PCT = 15.0   # info above this share of equity for one name (theses file strategy)
 ACTION_PCT = 20.0          # act (trim) above this share
 AI_CLUSTER = {"NVDA", "PLTR", "VST", "INTC", "SCHG"}   # names that fall together when AI capex sentiment turns
 AI_CLUSTER_PCT = 30.0
 CORE_SYMBOL = "SPYM"       # the broad-index core fund; new cash and trim proceeds go here
-CORE_TARGET_PCT = 75.0     # sized by the 2022-replay stress test (config/theses.yaml header)
+CORE_TARGET_PCT = 75.0     # sized by the 2022-replay stress test (theses file header)
 QUANTUM = {"IONQ", "RGTI", "QUBT"}
 QUANTUM_PCT = 5.0
 DRAWDOWN_PCT = -10.0       # info: this far under cost
@@ -41,7 +41,8 @@ EARNINGS_WITHIN_DAYS = 7
 FILING_DAYS = 7
 NEWS_DAYS = 3
 INVESTMENT_TAGS = ("ShortTermInvestments", "MarketableSecuritiesCurrent", "AvailableForSaleSecuritiesDebtSecuritiesCurrent")
-THESES_PATH = PROJECT_ROOT / "config" / "theses.yaml"
+# My real theses stay out of git: copy config/theses.example.yaml to this path. Without it the advisor runs with none.
+THESES_PATH = PROJECT_ROOT / "config" / "theses.local.yaml"
 
 
 class Call(BaseModel):

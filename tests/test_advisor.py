@@ -151,3 +151,21 @@ def test_press_release_text_is_wrapped_as_untrusted():
     assert prompt.count("</untrusted_document>") == 1            # the injected closing tag was stripped
     assert '<untrusted_document symbol="AAA"' in prompt and "Guidance raised." in prompt
     assert "0001-26-000001" not in prompt and '"text"' not in prompt  # not leaked into the plain-JSON filings list
+
+
+def test_theses_load_from_the_gitignored_local_file(tmp_path, monkeypatch):
+    local = tmp_path / "theses.local.yaml"
+    local.write_text('AAA: "Sell if revenue growth < 10%"\n')
+    monkeypatch.setattr(advisor, "THESES_PATH", local)
+    assert advisor.load_theses() == {"AAA": "Sell if revenue growth < 10%"}
+
+
+def test_theses_missing_local_file_means_no_theses_not_the_example(tmp_path, monkeypatch):
+    monkeypatch.setattr(advisor, "THESES_PATH", tmp_path / "theses.local.yaml")
+    assert advisor.load_theses() == {}
+
+
+def test_real_theses_path_is_the_local_file_and_the_example_parses():
+    assert advisor.THESES_PATH.name == "theses.local.yaml"
+    example = advisor.yaml.safe_load((advisor.PROJECT_ROOT / "config" / "theses.example.yaml").read_text())
+    assert example and all(isinstance(k, str) and isinstance(v, str) for k, v in example.items())

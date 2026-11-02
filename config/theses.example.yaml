@@ -1,0 +1,12 @@
+# Example theses for the read-only advisor. Copy this file to config/theses.local.yaml (gitignored) and write your own;
+# the advisor reads only the local file and runs with no theses if it is missing.
+#
+# One line per holding: why you own it, then a "Sell if" that is a number or a dated, checkable event, so the advisor
+# can check it against news, SEC filings and fundamentals and answer yes or no.
+#
+# Strategy notes (sizing, caps, core target) can go in this header; the advisor's caps themselves are constants in
+# src/trading_agent/advisor.py.
+
+AAA: "Index core: broad, cheap market exposure. Sell if: never for a thesis reason; rebalance only."
+BBB: "Owns a growing recurring-revenue business. Sell if: revenue growth falls below 10% for two reported quarters."
+CCC: "Cash-generative and pays a dividend. Sell if: the dividend is cut, or free cash flow is negative for a full year."
