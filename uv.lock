@@ -1605,6 +1605,18 @@ wheels = [
 ]
 
 [[package]]
+name = "lse-data"
+version = "3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/68/24d0c34c5e48c7a92be0c35cd2839ca0c91f772707a10f9ac94e0c85d2f1/lse_data-3.0.tar.gz", hash = "sha256:805dea2b4f8edd00c8b53af87c5aff5eb6dd4b040839b0190713ed3e914d6aad", size = 67479, upload-time = "2026-10-25T20:16:47.912Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/a2/0d680133a94c4918a4101eecf63cf776c275b92f04fd2c64354bad7943b4/lse_data-3.0-py3-none-any.whl", hash = "sha256:39fe9b375c3e57b499aa38a1167e61a8c2af5879db3358dc1b854b546712f6b7", size = 44125, upload-time = "2026-10-25T20:16:46.808Z" },
+]
+
+[[package]]
 name = "lxml"
 version = "6.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2881,6 +2893,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "databento" },
     { name = "feedparser" },
+    { name = "lse-data" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas" },
@@ -2907,6 +2920,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.40" },
     { name = "databento", specifier = ">=0.87.0" },
     { name = "feedparser", specifier = ">=6.0.14" },
+    { name = "lse-data", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pydantic", specifier = ">=2.7" },
