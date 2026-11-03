@@ -146,6 +146,7 @@ def main(argv: list[str] | None = None) -> None:
     ad = sub.add_parser("advise", help="read-only daily digest of the real holdings, sent to the advisor Telegram bot")
     ad.add_argument("--dry-run", action="store_true", help="print only: no Telegram, no prediction log")
     ad.add_argument("--force", action="store_true", help="run again even if today's digest was already sent")
+    sub.add_parser("advise-check", help="Telegram a warning if today's advisor digest was not sent (second launchd job)")
     sub.add_parser("advise-score", help="score the advisor prediction log against the pre-registered pass bar")
     pr = sub.add_parser("probe")
     pr.add_argument("--symbol", default="SPY")
@@ -213,6 +214,14 @@ def main(argv: list[str] | None = None) -> None:
         ok = advisor.run(broker, Ledger(settings.state_dir / "advisor" / "ledger.db"),
                          dry_run=args.dry_run, force=args.force)
         sys.exit(0 if ok or args.dry_run else 1)
+    elif args.cmd == "advise-check":
+        from datetime import date
+
+        from . import advisor
+
+        if advisor.missed(Ledger(settings.state_dir / "advisor" / "ledger.db"), date.today()):
+            advisor.send("Advisor: no digest was sent today. Check state/advisor.err and `launchctl list | grep advisor`.")
+            sys.exit(1)
     elif args.cmd == "advise-score":
         from . import advisor_score
 

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS launchd job: runs `trading-agent advise-check` at 10:00 SGT (UTC+8) Tuesday to Saturday, 90 min after the digest,
+     and Telegrams a warning if no digest was sent that day.
+     Read-only: it never places orders. Sends to the advisor Telegram bot (ADVISOR_TELEGRAM_* in .env).
+     Install:  cp scripts/com.trading-agent.advisor-check.plist ~/Library/LaunchAgents/
+               launchctl load ~/Library/LaunchAgents/com.trading-agent.advisor-check.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.trading-agent.advisor-check</string>
+  <key>WorkingDirectory</key><string>/Users/evanyap7/trading-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string><string>run</string><string>trading-agent</string>
+    <string>advise-check</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>/Users/evanyap7/trading-agent/state/advisor-check.log</string>
+  <key>StandardErrorPath</key><string>/Users/evanyap7/trading-agent/state/advisor-check.err</string>
+</dict>
+</plist>

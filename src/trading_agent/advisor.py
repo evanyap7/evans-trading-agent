@@ -10,8 +10,10 @@ the news and one news-blind control on the same model, so a later scorer can tel
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import time
 from datetime import date, timedelta
 from typing import Any, Callable
 
@@ -25,6 +27,8 @@ from .insider import DEFAULT_UA
 from .ledger import Ledger
 from .news import _clean_text, _eid, _parse_entry_date, strip_untrusted_tags
 from .schemas import AccountState, Evidence, utcnow
+
+log = logging.getLogger(__name__)
 
 MAX_HOLDINGS = 15          # LLM sees the largest positions only; keeps the daily call small
 CONCENTRATION_PCT = 15.0   # info above this share of equity for one name (theses file strategy)
@@ -67,8 +71,10 @@ class Output(BaseModel):
 # -- data (every fetcher fails soft: a missing source must not kill the digest) ---------------------------------
 
 
-def ticker_news(symbols: list[str], per_symbol: int = 4, days: int = NEWS_DAYS) -> list[Evidence]:
-    """Per-ticker headlines from Yahoo's RSS feed. (yfinance's own `.news` returns nothing as of 2026-10-31.)"""
+def ticker_news(symbols: list[str], per_symbol: int = 4, days: int = NEWS_DAYS,
+                fails: list[str] | None = None) -> list[Evidence]:
+    """Per-ticker headlines from Yahoo's RSS feed. (yfinance's own `.news` returns nothing as of 2026-10-31.)
+    A feed that errors (or answers with no parseable feed) is named in `fails` so the digest can show the gap."""
     import feedparser
 
     out: list[Evidence] = []
@@ -77,6 +83,8 @@ def ticker_news(symbols: list[str], per_symbol: int = 4, days: int = NEWS_DAYS) 
         try:
             feed = feedparser.parse(f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={sym}&region=US&lang=en-US",
                                     agent="Mozilla/5.0")
+            if feed.get("bozo") and not feed.entries:
+                raise ValueError("unparseable feed")
             for entry in feed.entries:
                 title = _clean_text(entry.get("title", ""))
                 when = _parse_entry_date(entry)
@@ -89,7 +97,8 @@ def ticker_news(symbols: list[str], per_symbol: int = 4, days: int = NEWS_DAYS) 
                 if sum(e.symbol == sym for e in out) >= per_symbol:
                     break
         except Exception:
-            continue
+            if fails is not None:
+                fails.append(f"news:{sym}")
     return out
 
 
@@ -112,7 +121,7 @@ def _facts(cik: int, ns: str, tag: str, headers: dict) -> list[dict]:
         return []
 
 
-def fundamentals(symbols: list[str]) -> dict[str, dict]:
+def fundamentals(symbols: list[str], fails: list[str] | None = None) -> dict[str, dict]:
     """Numbers behind the numeric 'Sell if' triggers, from EDGAR XBRL: share-count growth (dilution) and cash runway.
 
     Runway = liquid assets / last full-year operating cash burn, in months. `cash_only_runway_months` is a floor; the
@@ -121,6 +130,8 @@ def fundamentals(symbols: list[str]) -> dict[str, dict]:
     """
     headers, ciks = _edgar()
     out: dict[str, dict] = {}
+    if not ciks and fails is not None and "EDGAR" not in fails:
+        fails.append("EDGAR")
     for sym in symbols:
         if sym not in ciks:
             continue
@@ -195,11 +206,13 @@ def last_eps_surprise(sym: str) -> dict[str, float | str]:
         return {}
 
 
-def sec_filings(symbols: list[str], days: int = FILING_DAYS) -> dict[str, list[dict]]:
+def sec_filings(symbols: list[str], days: int = FILING_DAYS, fails: list[str] | None = None) -> dict[str, list[dict]]:
     """Recent 8-K / 10-Q / 10-K filings per symbol from EDGAR; the 8-K `items` codes say what kind of event it was."""
     headers, ciks = _edgar()
     out: dict[str, list[dict]] = {}
     if not ciks:
+        if fails is not None and "EDGAR" not in fails:
+            fails.append("EDGAR")
         return out
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     for sym in symbols:
@@ -209,6 +222,8 @@ def sec_filings(symbols: list[str], days: int = FILING_DAYS) -> dict[str, list[d
             r = requests.get(f"https://data.sec.gov/submissions/CIK{int(ciks[sym]):010d}.json", headers=headers, timeout=15)
             rec = r.json()["filings"]["recent"]
         except Exception:
+            if fails is not None:
+                fails.append(f"filings:{sym}")
             continue
         rows = [{"form": f, "date": d, "items": it, "acc": acc}
                 for f, d, it, acc in zip(rec["form"], rec["filingDate"], rec.get("items", [""] * len(rec["form"])),
@@ -470,24 +485,81 @@ def render(account: AccountState, flags: list[str], notes: dict[str, HoldingNote
 # -- delivery ----------------------------------------------------------------------------------------------
 
 
-def send(text: str) -> bool:
-    """Own bot, own credentials: never the trading bot's. Plain text so odd characters cannot break formatting."""
-    token = os.environ.get("ADVISOR_TELEGRAM_BOT_TOKEN", "").strip()
-    chat = os.environ.get("ADVISOR_TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat:
-        return False
+TG_LIMIT = 4000  # Telegram caps a message at 4096 characters
+SEND_TRIES = 3
+
+
+def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
+    """Break text into <= limit chunks on line boundaries; a single over-long line is hard-split. Chunks are
+    labelled (i/n) when there is more than one, so a duplicate after a retry is recognisable."""
     chunks, cur = [], ""
     for line in text.split("\n"):
-        if len(cur) + len(line) + 1 > 4000:
+        while len(line) > limit:
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if len(cur) + len(line) + 1 > limit:
             chunks.append(cur)
             cur = ""
         cur += line + "\n"
     chunks.append(cur)
-    try:
-        return all(requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                                 json={"chat_id": chat, "text": c}, timeout=10).status_code == 200 for c in chunks)
-    except requests.RequestException:
+    chunks = [c.rstrip() for c in chunks if c.strip()] or [text]
+    n = len(chunks)
+    return chunks if n == 1 else [f"({i}/{n})\n{c}" for i, c in enumerate(chunks, 1)]
+
+
+def send(text: str, sleep: Callable[[float], None] = time.sleep) -> bool:
+    """Own bot, own credentials: never the trading bot's. Plain text so odd characters cannot break formatting.
+    Each chunk is retried on its own (429 honours Telegram's retry_after), so a retry never re-sends a chunk that
+    already went out. Failures are logged without the URL: it contains the bot token."""
+    token = os.environ.get("ADVISOR_TELEGRAM_BOT_TOKEN", "").strip()
+    chat = os.environ.get("ADVISOR_TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat:
         return False
+    for chunk in split_message(text):
+        for attempt in range(1, SEND_TRIES + 1):
+            wait = 2.0 ** attempt
+            try:
+                r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                                  json={"chat_id": chat, "text": chunk}, timeout=10)
+                if r.status_code == 200:
+                    break
+                log.warning("telegram send: HTTP %s %s", r.status_code, r.text[:200])
+                if r.status_code == 429:
+                    wait = float(r.json().get("parameters", {}).get("retry_after", wait))
+                elif r.status_code < 500:
+                    return False  # 4xx other than 429 (bad token/chat): retrying cannot help
+            except (requests.RequestException, ValueError) as e:
+                log.warning("telegram send: %s", type(e).__name__)
+            if attempt == SEND_TRIES:
+                return False
+            sleep(min(wait, 60.0))
+    return True
+
+
+def data_gaps(fails: list[str], n_news: int) -> str:
+    """One line for the digest header. An empty news list or filings table is otherwise indistinguishable from a quiet day."""
+    if not fails and n_news:
+        return ""
+    bits = []
+    if "EDGAR" in fails:
+        bits.append("EDGAR unreachable (no filings or fundamentals)")
+    bits += [f"{f.split(':', 1)[1]} {f.split(':', 1)[0]} fetch failed" for f in fails if ":" in f]
+    if not n_news and not any(f.startswith("news:") for f in fails):
+        bits.append("no news items found")
+    return "DATA GAPS: " + "; ".join(bits) + ". 'Nothing material' below may just mean missing data."
+
+
+def missed(ledger: Ledger, today: date) -> bool:
+    """True when no digest was sent today (checked by `advise-check`, a second scheduled job)."""
+    return not any(json.loads(r["payload"]).get("sent") for r in ledger.events("advisor_run") if r["decision_id"] == today.isoformat())
+
+
+def alert_failure(stage: str, exc: BaseException) -> None:
+    """Best-effort Telegram note that the job died. Type name only: exception text can carry credentials."""
+    send(f"Advisor FAILED at {stage}: {type(exc).__name__}. No digest today; see state/advisor.err.")
 
 
 # -- orchestration -------------------------------------------------------------------------------------------
@@ -524,19 +596,41 @@ def new_ideas(account: AccountState, model: str, usage: dict) -> tuple[str, list
 
 def run(broker: Any, ledger: Ledger, *, today: date | None = None, dry_run: bool = False, force: bool = False,
         printer: Callable[[str], None] = print) -> bool:
+    """Run the digest; any crash sends a one-line failure note to Telegram, then re-raises for the launchd log."""
+    try:
+        return _run(broker, ledger, today=today, dry_run=dry_run, force=force, printer=printer)
+    except Exception as e:
+        if not dry_run:
+            alert_failure("run", e)
+        raise
+
+
+def _run(broker: Any, ledger: Ledger, *, today: date | None, dry_run: bool, force: bool,
+         printer: Callable[[str], None]) -> bool:
     today = today or date.today()
     day = today.isoformat()
-    if not dry_run and not force and ledger.has_event("advisor_run", day):
-        printer(f"advisor already ran for {day} (use --force to rerun)")
-        return True
+    prior = [json.loads(r["payload"]) for r in ledger.events("advisor_run") if r["decision_id"] == day]
+    if not dry_run and not force and prior:
+        if any(p.get("sent") for p in prior):
+            printer(f"advisor already ran for {day} (use --force to rerun)")
+            return True
+        saved = next((p["text"] for p in prior if p.get("text")), "")
+        if saved:  # an earlier run built the digest but Telegram failed: resend it, do not re-ask the model or re-log calls
+            sent = send(saved)
+            ledger.append("advisor_run", {"sent": sent, "resend": True}, decision_id=day)
+            printer("resent the saved digest" if sent else "NOTE: resend to Telegram failed")
+            return sent
+        printer(f"advisor ran for {day} but nothing was sent and no text was saved (use --force to rerun)")
+        return False
 
     account = broker.get_account(force=True)  # the only broker call this module makes
     symbols = [p.symbol for p in sorted(account.positions, key=lambda p: -p.market_value)[:MAX_HOLDINGS]]
     theses = load_theses()
-    news = ticker_news(symbols)
-    filings = sec_filings(symbols)
+    fails: list[str] = []
+    news = ticker_news(symbols, fails=fails)
+    filings = sec_filings(symbols, fails=fails)
     earnings = {s: d for s in symbols if (d := next_earnings(s))}
-    facts = fundamentals(symbols)
+    facts = fundamentals(symbols, fails=fails)
     for s in symbols:
         if surprise := last_eps_surprise(s):
             facts.setdefault(s, {}).update(surprise)
@@ -553,10 +647,12 @@ def run(broker: Any, ledger: Ledger, *, today: date | None = None, dry_run: bool
             try:  # control arm: same model, no news. Failure here must not block the digest.
                 blind, usage["blind"] = ask(model, build_prompt(account, theses, [], {}, {}, with_news=False))
                 calls["blind"] = blind.calls
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("blind arm failed: %s", type(e).__name__)
         except (Exception, ValidationError) as e:
             llm_note = f"(LLM summary unavailable today: {type(e).__name__}; showing data only)"
+    if gaps := data_gaps(fails, len(news)):
+        llm_note = f"{llm_note}\n{gaps}".strip()
 
     flags = risk_flags(account, earnings, today)
     text = render(account, flags, notes, filings, earnings, today, llm_note)
@@ -611,7 +707,8 @@ def run(broker: Any, ledger: Ledger, *, today: date | None = None, dry_run: bool
                                        "spy_price": spy, "why": i.why, "wrong_if": i.wrong_if},
                       decision_id=f"{day}:idea:{i.symbol}")
     sent = send(text)
-    ledger.append("advisor_run", {"sent": sent, "usage": usage, "env": getattr(broker, "environment", "")}, decision_id=day)
+    ledger.append("advisor_run", {"sent": sent, "usage": usage, "env": getattr(broker, "environment", ""),
+                                  "text": "" if sent else text}, decision_id=day)  # keep the text only if it must be resent
     if not sent:
         printer("NOTE: not sent to Telegram (ADVISOR_TELEGRAM_BOT_TOKEN / ADVISOR_TELEGRAM_CHAT_ID unset or send failed)")
     return sent
