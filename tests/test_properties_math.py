@@ -50,7 +50,8 @@ def test_dispersion_invariants(xs):
     assert d.range_abs >= 0 and d.variance >= 0 and d.standard_deviation >= 0
     assert d.mean_absolute_deviation >= 0
     assert d.q1 <= d.q3
-    assert d.q3 - d.q1 <= d.range_abs + 1.5e-4 + 1e-9  # q1, q3 and the range are each rounded to 4 dp: 3 x 5e-5
+    # q1, q3 and the range are each rounded to 4 dp (3 x 5e-5); the relative term covers float spacing at ~1e11 magnitudes
+    assert d.q3 - d.q1 <= d.range_abs + 1.5e-4 + 1e-9 + 1e-12 * d.range_abs
 
 
 @given(st.floats(min_value=-1e9, max_value=1e9, allow_nan=False), st.integers(min_value=4, max_value=100))
