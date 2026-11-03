@@ -233,6 +233,7 @@ def test_data_gaps_names_what_is_missing():
     g = advisor.data_gaps(["EDGAR", "news:AAA"], 0)
     assert "EDGAR unreachable" in g and "AAA news fetch failed" in g and "may just mean missing data" in g
     assert "no news items found" in advisor.data_gaps([], 0)
+    assert "GRAB: no fundamentals data" in advisor.data_gaps(["fundamentals:GRAB"], 3)
 
 
 def test_digest_shows_data_gaps(monkeypatch):
@@ -283,3 +284,45 @@ def test_missed_is_true_until_a_digest_is_sent():
     assert advisor.missed(ledger, TODAY)
     ledger.append("advisor_run", {"sent": True}, decision_id=TODAY.isoformat())
     assert not advisor.missed(ledger, TODAY)
+
+
+# -- advice rules, closed-market note, fundamentals gaps -------------------------------------------------------
+
+
+def test_allowed_rules_come_only_from_computed_data():
+    flags = ["ACTION: TSLA is 30% of equity (trim above 20%)", "ACTION: AI cluster (NVDA, PLTR) is 35% of equity (cap 30%)",
+             "XOM is 17% of equity (soft cap 15%)", "REVIEW: INTC is 40% under cost"]
+    risk = {"top_risk": [("NVDA", 41.0)]}
+    theses = {"QUBT": "Sell if cash runway < 12 months", "XOM": "Hold for dividends"}
+    rules = advisor.allowed_rules(flags, theses, risk, {"QUBT", "XOM", "TSLA"})
+    assert rules == ["cap:AI cluster", "cap:TSLA", "core_target", "risk:NVDA", "sell_if:QUBT"]
+
+
+def test_check_advice_drops_a_rule_the_data_does_not_back():
+    acct = account(Position(symbol="TSLA", quantity=2, avg_cost=400.0, last_price=400.0), equity=1000.0, cash=50.0)
+    A = advisor.Advice
+    items = [A(symbol="TSLA", action="sell", shares=1, reason="x", rule="cap:TSLA"),
+             A(symbol="SPYM", action="buy", shares=1, reason="x", rule="the stock looks cheap")]
+    trades, dropped, _ = advisor.check_advice(acct, items, {"SPYM": 50.0}, allowed=["cap:TSLA", "core_target"])
+    assert [(a.symbol, a.action) for a, _, _ in trades] == [("TSLA", "sell")]
+    assert "not backed" in dropped[0][1]
+
+
+def test_digest_notes_a_closed_market(monkeypatch):
+    stub_sources(monkeypatch)
+    monkeypatch.setattr(advisor, "is_trading_day", lambda d: False)
+    monkeypatch.setattr(advisor, "ask", lambda model, prompt: (advisor.Output(), {}))
+    lines: list[str] = []
+    broker = FakeBroker(account(Position(symbol="AAA", quantity=1, avg_cost=50.0, last_price=50.0)))
+    advisor.run(broker, Ledger(":memory:"), today=TODAY, dry_run=True, printer=lines.append)
+    assert "US markets were closed" in lines[0]
+
+
+def test_fundamentals_flags_a_filer_with_no_usable_data(monkeypatch):
+    monkeypatch.setattr(advisor, "_edgar", lambda: ({}, {"AAA": 1, "BBB": 2}))
+    monkeypatch.setattr(advisor, "_facts", lambda cik, ns, tag, headers:
+                        [{"end": "2025-06-30", "val": 10.0}, {"end": "2026-06-30", "val": 11.0}]
+                        if cik == 1 and tag == "EntityCommonStockSharesOutstanding" else [])
+    fails: list[str] = []
+    assert set(advisor.fundamentals(["AAA", "BBB", "ETF"], fails=fails)) == {"AAA"}
+    assert fails == ["fundamentals:BBB"]
